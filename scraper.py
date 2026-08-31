@@ -358,13 +358,21 @@ def click_join(page: Page) -> bool:
 
     btn = page.locator(JOIN_BTN).first
     try:
-        label = btn.inner_text().strip().lower()
+        raw = btn.inner_text().strip()
+        label = re.sub(r"\s+", " ", raw).lower()
     except Exception:
+        raw = ""
         label = ""
+
+    # A giveaway még nem indult el: a gomb le van tiltva, és egy 'múlva'
+    # visszaszámlálót mutat. A bot nem tud csatlakozni -> hiba, timert kiírjuk.
+    if "múlva" in label:
+        typewriter(f"[ERROR] A giveaway még nem indult el – a bot nem tud csatlakozni. Indulásig hátralévő: {raw}")
+        return False
 
     # Már benne vagyunk: a gomb a következő (fizetős) nevezést ajánlja.
     if "nevezést" in label or "szerezd meg" in label:
-        typewriter(f"[JOIN] Már benne vagy a giveawayben (gomb: '{label}') – nem kattintok újra.")
+        typewriter(f"[JOIN] Már benne vagy a giveawayben (gomb: '{raw}') – nem kattintok újra.")
         return True
 
     try:
@@ -441,12 +449,14 @@ def wait_for_winner(page: Page, poll: int = 1) -> bool:
 def wait_until_join(page: Page, target: int, poll: int = 1) -> str:
     """
     Figyeli az élő visszaszámlálót, és akkor tér vissza 'join'-nel, amikor a
-    hátralévő idő <= target (mp). Ha közben kipörgetik a nyertest, 'winner'-t
-    ad vissza; ESC esetén 'esc'-t.
+    hátralévő idő <= target (mp). Ha a giveaway még nem indult el (a gomb egy
+    'múlva' visszaszámlálót mutat), 'not_started'-dal tér vissza (hiba jelezve).
+    Ha közben kipörgetik a nyertest, 'winner'-t ad vissza; ESC esetén 'esc'-t.
     Mozgó időzítőt ír ki (ugyanazon a soron).
     """
     typewriter(f"[WAIT] Várakozás a belépési időpontra (cél: <= {target}s hátralévő)...")
     last = None
+    last_notstart = None
     while True:
         if ABORT_ON_ESC and _esc_pressed():
             sys.stdout.write("\n")
@@ -455,6 +465,24 @@ def wait_until_join(page: Page, target: int, poll: int = 1) -> str:
         if page.locator(WINNER_AVATAR).count() > 0:
             sys.stdout.write("\n")
             return "winner"
+
+        # A giveaway még nem indult el? A gomb egy 'múlva' visszaszámlálót mutat.
+        if page.locator(JOIN_BTN).first.count() > 0:
+            try:
+                jraw = page.locator(JOIN_BTN).first.inner_text().strip()
+                jl = re.sub(r"\s+", " ", jraw).lower()
+            except Exception:
+                jl = ""
+            if "múlva" in jl:
+                if jl != last_notstart:
+                    timer = re.sub(r"\s+", " ", jraw)
+                    typewriter(
+                        f"[ERROR] A giveaway még nem indult el – a bot nem tud "
+                        f"csatlakozni. Indulásig hátralévő: {timer}"
+                    )
+                    last_notstart = jl
+                sys.stdout.write("\n")
+                return "not_started"
 
         t = read_time_left(page)
         if t:
@@ -560,9 +588,26 @@ def run_scraper_logic(page: Page, join_target: int = 0, start_time: datetime | N
             # már kipörgettek a betöltéskor
             typewriter("[INFO] A nyertes már látható a betöltéskor.")
             report_winner(page)
+        elif status == "not_started":
+            # a giveaway még nem indult el (hiba már jelezve a wait_until_join-ben)
+            if ABORT_ON_ESC and _esc_pressed():
+                break
+            typewriter("[WAIT] Várakozás a giveaway indítására – újrapróbálkozás...")
+            time.sleep(15)
+            page.reload(wait_until="domcontentloaded")
+            time.sleep(2)
+            continue
         else:
             # 1) Belépés a giveawaybe (elérte a cél hátralévő időt)
-            click_join(page)
+            ok = click_join(page)
+            if not ok:
+                # pl. a giveaway még nem indult el -> várunk és újrapróbáljuk
+                if ABORT_ON_ESC and _esc_pressed():
+                    break
+                typewriter("[RETRY] Nem sikerült csatlakozni – újrapróbálkozás a következő körben.")
+                page.reload(wait_until="domcontentloaded")
+                time.sleep(10)
+                continue
 
             # 2) Hátralévő idő kiírása a belépéskor
             t0 = read_time_left(page)

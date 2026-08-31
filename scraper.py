@@ -345,8 +345,10 @@ def safe_inner_text(page: Page, selector: str, default: str = "") -> str:
 def click_join(page: Page) -> bool:
     """
     Rákattint a 'Csatlakozás Nyereményjátékhoz' gombra.
-    Ha a gomb tiltva van (már benne vagy), nem csinál semmit, de True-val tér
-    vissza (hiszen már a giveawayben vagyunk).
+    Ha már benne vagy a giveawayben, a gomb szövege megváltozik (pl.
+    "Szerezd meg a(z) #2. nevezést · befizetés 1,86 EUR") – ilyenkor NEM
+    kattintunk újra (nem veszünk fel fizetős #2 nevezést), hanem jelezzük,
+    hogy már bent vagyunk. Ha a gomb teljesen tiltva van, szintén kihagyjuk.
     """
     try:
         page.wait_for_selector(JOIN_BTN, state="attached", timeout=20000)
@@ -355,6 +357,16 @@ def click_join(page: Page) -> bool:
         return False
 
     btn = page.locator(JOIN_BTN).first
+    try:
+        label = btn.inner_text().strip().lower()
+    except Exception:
+        label = ""
+
+    # Már benne vagyunk: a gomb a következő (fizetős) nevezést ajánlja.
+    if "nevezést" in label or "szerezd meg" in label:
+        typewriter(f"[JOIN] Már benne vagy a giveawayben (gomb: '{label}') – nem kattintok újra.")
+        return True
+
     try:
         if btn.is_enabled():
             btn.click(timeout=10000)

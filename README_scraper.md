@@ -13,12 +13,18 @@ amit aztán közvetlenül vezérel/olvas.
 3. A meglévő ablakban új lapot nyit, betölti:
    `https://keydrop.com/hu/giveaways/amateur`
 4. Folyamatos automata (`run_scraper_logic`):
-   - rákattint a **Csatlakozás Nyereményjátékhoz** gombra,
-   - kiírja a **hátralévő időt** (élő visszaszámlálóval),
+   - indításkor **egyszer megkérdezi, hány mp hátralévőkor lépjen be**
+     (pl. `30s`, `1m`, `1m30s`). Figyeli az élő visszaszámlálót, és akkor
+     kattint a **Csatlakozás Nyereményjátékhoz** gombra, amikor a hátralévő
+     idő eléri a célt (pl. `30s` = 30 mp hátralévőkor),
+   - kiírja a **hátralévő időt** (mozgó időzítővel, nem új sorba írja),
    - amikor kipörgetik a nyertest, kiírja a **nyertes nevét** és a **nyert
-     skin kategóriáját / nevét / árát** a konzolra,
+     skin kategóriáját / nevét / árát** egy fix szélességű dobozban,
+   - ha a nyertes `YTM4rc1x` vagy `1r4z1`, elmenti a nyerést a saját
+     `YTM4rc1x.txt` / `1r4z1.txt` fájlba (dátum, óra:perc, skin, ár),
    - **frissíti az oldalt és újra belép** a következő körben.
-   ESC-re leáll (ha `ABORT_ON_ESC = True`).
+   ESC-re leáll (ha `ABORT_ON_ESC = True`). A konzol minden nyertes után
+   törlődik, így csak a legfrissebb nyertes látszik.
 
 ## Telepítés (saját gépen)
 ```bash

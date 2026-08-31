@@ -78,12 +78,10 @@ def find_opera_gx_executable() -> str | None:
     Megkeresi az Opera GX futtatható fájlt az alapértelmezett helyeken.
     Ha OPERA_GX_PATH környezeti változó be van állítva, azt használja.
     """
-    # 1) Felhasználói felülírás
     if OPERA_GX_PATH and os.path.isfile(OPERA_GX_PATH):
         typewriter(f"[INFO] Opera GX útvonal (env): {OPERA_GX_PATH}")
         return OPERA_GX_PATH
 
-    # 2) Operációs rendszer szerinti alapértelmezett útvonalak
     candidates = []
 
     if sys.platform.startswith("win"):
@@ -106,7 +104,7 @@ def find_opera_gx_executable() -> str | None:
             os.path.expanduser("~/Applications/Opera GX.app/Contents/MacOS/Opera GX"),
         ]
 
-    else:  # Linux (Opera GX hivatalosan nincs Linuxra, de ha van, itt találjuk)
+    else:  # Linux
         candidates = [
             os.path.expanduser("~/opera-gx/opera"),
             "/usr/bin/opera-gx",
@@ -176,11 +174,9 @@ def open_new_tab(browser: Browser) -> tuple[BrowserContext, Page]:
       - ha mi indítottuk: létrehozunk egy contextet és abban az új lapot.
     """
     if browser.contexts:
-        # Futó böngésző: az első (default) contextben nyitunk új lapot.
         context = browser.contexts[0]
         typewriter("[INFO] Új lap nyitása a meglévő Opera GX ablakban...")
     else:
-        # Mi indítottuk: új context + új lap.
         context = browser.new_context()
         typewriter("[INFO] Új lap nyitása (új context)...")
 
@@ -192,7 +188,6 @@ def open_target_page(page: Page):
     """Megnyitja a keydrop amateur giveaway oldalt és vár a betöltésre."""
     typewriter(f"[INFO] Oldal megnyitása: {TARGET_URL}")
     page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT)
-    # Egy kis stabilizálódási idő a dinamikus (JS) tartalomnak.
     time.sleep(2)
     title = page.title()
     typewriter(f"[INFO] Oldal címe: {title}")
@@ -203,21 +198,14 @@ def open_target_page(page: Page):
 # SELECTOROK (a keydrop oldalról – ezeket adtad meg)
 # ----------------------------------------------------------------------
 
-# "Csatlakozás Nyereményjátékhoz" gomb
 JOIN_BTN = 'button[data-testid="btn-giveaway-join-the-giveaway"]'
-
-# Hátralévő idő (érték), pl. " 00:01:30"
 TIME_LEFT = '[data-testid="label-giveaway-current-status"]'
-
-# A nyertes blokk (a kép `data-winner-avatar` attribútuma jelzi, hogy kipörgettek)
 WINNER_AVATAR = '[data-winner-avatar]'
-
-# A nyert skin adatai
 SKIN_CATEGORY = '[data-testid="case-roll-won-item-category"]'
 SKIN_NAME = '[data-testid="case-roll-won-item-name"]'
 SKIN_PRICE = '[data-testid="case-roll-won-item-price"]'
 
-# Egy kör max várakozási ideje a nyertesre (mp). Egy giveaway pár perc szokott lenni.
+# Egy kör max várakozási ideje a nyertesre (mp).
 WINNER_WAIT_TIMEOUT = 30 * 60
 
 # Figyelt nyertesek -> melyik txt fájlba mentsük a nyeréseiket.
@@ -254,14 +242,34 @@ def parse_duration(text: str) -> int | None:
     return total if total > 0 else None
 
 
-def ask_join_delay() -> int:
+def _time_to_seconds(text: str) -> int | None:
+    """'00:01:30' vagy '1:30' -> 90 (mp). None, ha nem értelmezhető."""
+    if not text:
+        return None
+    try:
+        nums = [int(p) for p in text.split(":")]
+    except ValueError:
+        return None
+    if len(nums) == 3:
+        return nums[0] * 3600 + nums[1] * 60 + nums[2]
+    if len(nums) == 2:
+        return nums[0] * 60 + nums[1]
+    if len(nums) == 1:
+        return nums[0]
+    return None
+
+
+def ask_join_target() -> int:
     """
-    Egyszer kérdezi meg indításkor: mennyit várjon a belépés előtt.
+    Egyszer kérdezi meg indításkor: hány mp hátralévő időnél lépjen be.
+    A script figyeli az élő visszaszámlálót, és akkor kattint, amikor a
+    hátralévő idő eléri ezt az értéket (pl. 30s -> 30 mp hátralévőkor).
     Üres válasz = azonnali belépés (0s).
     """
     typewriter("=" * 60)
-    typewriter(" BEÁLLÍTÁS: mikor lépjen be a giveawaybe?")
-    typewriter(" Formátum: 1m30s, 2m, 60s, 120s, 90 ... (üres = azonnal)")
+    typewriter(" BEÁLLÍTÁS: mikor lépjen be? (hátralévő idő alapján)")
+    typewriter(" Add meg, hány mp hátralévőkor lépjen be:")
+    typewriter(" Formátum: 30s, 1m, 1m30s, 90 ... (üres = azonnal)")
     typewriter("=" * 60)
     while True:
         try:
@@ -270,9 +278,9 @@ def ask_join_delay() -> int:
             return 0
         secs = parse_duration(raw)
         if secs is not None:
-            typewriter(f"[OK] Belépés előtti várakozás: {secs} mp")
+            typewriter(f"[OK] Belépés, amikor ennyi mp van hátra: {secs} s")
             return secs
-        typewriter(" Nem értem a formátumot, próbáld újra (pl. 1m30s).")
+        typewriter(" Nem értem a formátumot, próbáld újra (pl. 30s).")
 
 
 def clear_console():
@@ -418,6 +426,38 @@ def wait_for_winner(page: Page, poll: int = 1) -> bool:
     return False
 
 
+def wait_until_join(page: Page, target: int, poll: int = 1) -> str:
+    """
+    Figyeli az élő visszaszámlálót, és akkor tér vissza 'join'-nel, amikor a
+    hátralévő idő <= target (mp). Ha közben kipörgetik a nyertest, 'winner'-t
+    ad vissza; ESC esetén 'esc'-t.
+    Mozgó időzítőt ír ki (ugyanazon a soron).
+    """
+    typewriter(f"[WAIT] Várakozás a belépési időpontra (cél: <= {target}s hátralévő)...")
+    last = None
+    while True:
+        if ABORT_ON_ESC and _esc_pressed():
+            sys.stdout.write("\n")
+            return "esc"
+
+        if page.locator(WINNER_AVATAR).count() > 0:
+            sys.stdout.write("\n")
+            return "winner"
+
+        t = read_time_left(page)
+        if t:
+            secs = _time_to_seconds(t)
+            if secs is not None and secs <= target:
+                sys.stdout.write("\n")
+                return "join"
+
+        if t and t != last:
+            print_timer(f"[ENTRY] Hátralévő idő: {t}  (cél: {target}s)")
+            last = t
+
+        time.sleep(poll)
+
+
 def report_winner(page: Page):
     """Kiírja a konzolra a nyertest (fix szélességű dobozban, nem csúszik el)."""
     time.sleep(1.5)  # pár mp, amíg a skin adatok is megjelennek
@@ -462,10 +502,11 @@ def report_winner(page: Page):
             typewriter(f"[WIN] {winner} nyert! Elmentve ide: {fname}")
 
 
-def run_scraper_logic(page: Page, join_delay: int = 0):
+def run_scraper_logic(page: Page, join_target: int = 0):
     """
     FOLYAMATOS AUTOMATA (nem áll le):
-      - vár a beállított ideig, majd belép a giveawaybe (join gomb),
+      - figyeli a visszaszámlálót, és akkor lép be a giveawaybe, amikor a
+        hátralévő idő eléri a join_target értéket (pl. 30s -> 30 mp hátralévőkor),
       - kiírja a hátralévő időt (mozgó időzítővel),
       - amikor kipörgetik a nyertest, kiírja a nyertest + a nyert skin
         kategóriáját/nevét/árát (és elmenti a figyelt nyerteseket),
@@ -473,7 +514,7 @@ def run_scraper_logic(page: Page, join_delay: int = 0):
     ESC-re leáll (ha ABORT_ON_ESC = True).
     """
     typewriter("=" * 60)
-    typewriter(" KEYDROP AMATEUR – AUTOMATA GIVEAWAY INDÍTVA (ESC = kilépés)")
+    typewriter(f" KEYDROP AMATEUR – AUTOMATA (belépés, amikor <= {join_target}s van hátra | ESC = kilépés)")
     typewriter("=" * 60)
 
     round_no = 0
@@ -488,36 +529,39 @@ def run_scraper_logic(page: Page, join_delay: int = 0):
         typewriter(f" KÖR #{round_no} – belépés a giveawaybe")
         typewriter("-" * 60)
 
-        # 0) Várakozás a belépés előtt (egyszer beállított érték, minden körben)
-        if join_delay > 0:
-            typewriter(f"[WAIT] Várakozás {join_delay}s a belépés előtt...")
-            time.sleep(join_delay)
+        # 0) Várakozás a belépési időpontra: figyeljük a visszaszámlálót
+        status = wait_until_join(page, join_target)
+        if status == "esc":
+            typewriter("[ESC] Kilépés a várakozásból.")
+            break
 
-        # 1) Belépés a giveawaybe
-        click_join(page)
-
-        # 2) Hátralévő idő kiírása a belépéskor
-        t0 = read_time_left(page)
-        typewriter(f"[TIME] Belépéskor hátralévő idő: {t0 if t0 else '?'}")
-
-        # 3) Ha már a betöltéskor ki van pörgetve a nyertes -> azonnal feldolgozzuk
-        if page.locator(WINNER_AVATAR).count() > 0:
+        if status == "winner":
+            # már kipörgettek a betöltéskor
             typewriter("[INFO] A nyertes már látható a betöltéskor.")
             report_winner(page)
         else:
-            # 4) Várakozás a nyertesre (élő visszaszámlálóval)
-            found = wait_for_winner(page)
-            if not found:
-                if ABORT_ON_ESC and _esc_pressed():
-                    break
-                # időtúllépés -> újrapróbáljuk (refresh)
-                typewriter("[RETRY] Újrapróbálkozás a következő körben.")
-                page.reload(wait_until="domcontentloaded")
-                time.sleep(2)
-                continue
-            report_winner(page)
+            # 1) Belépés a giveawaybe (elérte a cél hátralévő időt)
+            click_join(page)
 
-        # 5) Refresh + újra belépés a következő körben (a ciklus elején történik)
+            # 2) Hátralévő idő kiírása a belépéskor
+            t0 = read_time_left(page)
+            typewriter(f"[TIME] Belépéskor hátralévő idő: {t0 if t0 else '?'}")
+
+            if page.locator(WINNER_AVATAR).count() > 0:
+                report_winner(page)
+            else:
+                # 3) Várakozás a nyertesre (mozgó időzítővel)
+                found = wait_for_winner(page)
+                if not found:
+                    if ABORT_ON_ESC and _esc_pressed():
+                        break
+                    typewriter("[RETRY] Újrapróbálkozás a következő körben.")
+                    page.reload(wait_until="domcontentloaded")
+                    time.sleep(2)
+                    continue
+                report_winner(page)
+
+        # 4) Refresh + újra belépés a következő körben
         typewriter("[REFRESH] Oldal frissítése, újra belépés a következő körben...")
         page.reload(wait_until="domcontentloaded")
         time.sleep(2)
@@ -533,11 +577,11 @@ def main():
     typewriter(f"Opera GX (CDP) webscraper indítása – {STARTUP_WAIT} mp várakozás...")
     time.sleep(STARTUP_WAIT)
 
-    join_delay = ask_join_delay()
+    join_target = ask_join_target()
 
     with sync_playwright() as p:
         browser = None
-        owned = False  # True = mi indítottuk a böngészőt (zárhatjuk), False = futóhoz csatlakoztunk
+        owned = False  # True = mi indítottuk a böngészőt, False = futóhoz csatlakoztunk
 
         # 1) próbálkozás: csatlakozás a futó böngészőhöz
         if ATTACH_TO_RUNNING:
@@ -559,14 +603,13 @@ def main():
 
         try:
             open_target_page(page)
-            run_scraper_logic(page, join_delay)
+            run_scraper_logic(page, join_target)
         except PWTimeoutError as e:
             typewriter(f"[ERROR] Időtúllépés az oldal/elem várásakor: {e}")
         except Exception as e:
             typewriter(f"[ERROR] Váratlan hiba: {e}")
         finally:
             if owned:
-                # Mi indítottuk -> nyitva tarthatjuk vagy bezárjuk.
                 if KEEP_BROWSER_OPEN:
                     typewriter("[INFO] Az Opera GX nyitva marad. Bezáráshoz nyomj Entert...")
                     try:
@@ -576,11 +619,7 @@ def main():
                 typewriter("[INFO] Böngésző bezárása.")
                 browser.close()
             else:
-                # Futó böngészőhöz csatlakoztunk -> SOHA ne zárjuk be a usert,
-                # csak a mi nyitott lapunkat hagyjuk nyitva / leválasztunk.
                 typewriter("[INFO] Leválasztás a futó Opera GX-ről (a böngésző nyitva marad).")
-
-    typewriter("Script vége. Viszontlátásra!")
 
 
 if __name__ == "__main__":

@@ -529,6 +529,15 @@ def run_scraper_logic(page: Page, join_target: int = 0):
         typewriter(f" KÖR #{round_no} – belépés a giveawaybe")
         typewriter("-" * 60)
 
+        # futásidő + indítás ideje (HH:MM, nullákkal padded: 09:05, ne 9:5)
+        if start_time is None:
+            start_time = datetime.now()
+        elapsed = datetime.now() - start_time
+        total_min = int(elapsed.total_seconds() // 60)
+        run_h, run_m = divmod(total_min, 60)
+        start_str = start_time.strftime("%H:%M")
+        typewriter(f"[INFO] A script {run_h} óra {run_m} perce fut  [indítva: {start_str}]")
+
         # 0) Várakozás a belépési időpontra: figyeljük a visszaszámlálót
         status = wait_until_join(page, join_target)
         if status == "esc":

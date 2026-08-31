@@ -12,8 +12,13 @@ amit aztán közvetlenül vezérel/olvas.
    a profilod / bejelentkezésed), és abban nyitja az új lapot.
 3. A meglévő ablakban új lapot nyit, betölti:
    `https://keydrop.com/hu/giveaways/amateur`
-4. A további lépéseket a `run_scraper_logic()` függvénybe írom, amikor
-   elmondod, mit kell az oldalon csinálni.
+4. Folyamatos automata (`run_scraper_logic`):
+   - rákattint a **Csatlakozás Nyereményjátékhoz** gombra,
+   - kiírja a **hátralévő időt** (élő visszaszámlálóval),
+   - amikor kipörgetik a nyertest, kiírja a **nyertes nevét** és a **nyert
+     skin kategóriáját / nevét / árát** a konzolra,
+   - **frissíti az oldalt és újra belép** a következő körben.
+   ESC-re leáll (ha `ABORT_ON_ESC = True`).
 
 ## Telepítés (saját gépen)
 ```bash

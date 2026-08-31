@@ -74,13 +74,16 @@ def find_opera_gx_executable() -> str | None:
     if sys.platform.startswith("win"):
         local = os.environ.get("LOCALAPPDATA", "")
         candidates = [
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\Opera GX\opera.exe"),
             os.path.expandvars(r"%LOCALAPPDATA%\Opera Software\Opera GX Stable\opera.exe"),
             os.path.expandvars(r"%USERPROFILE%\AppData\Local\Opera Software\Opera GX Stable\opera.exe"),
             r"C:\Program Files\Opera GX\opera.exe",
             r"C:\Program Files (x86)\Opera GX\Opera.exe",
+            r"C:\Users\Marci\AppData\Local\Programs\Opera GX\opera.exe",
         ]
         if local:
-            candidates.insert(0, os.path.join(local, "Opera Software", "Opera GX Stable", "opera.exe"))
+            candidates.insert(0, os.path.join(local, "Programs", "Opera GX", "opera.exe"))
+            candidates.insert(1, os.path.join(local, "Opera Software", "Opera GX Stable", "opera.exe"))
 
     elif sys.platform == "darwin":  # macOS
         candidates = [

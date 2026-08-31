@@ -502,7 +502,7 @@ def report_winner(page: Page):
             typewriter(f"[WIN] {winner} nyert! Elmentve ide: {fname}")
 
 
-def run_scraper_logic(page: Page, join_target: int = 0):
+def run_scraper_logic(page: Page, join_target: int = 0, start_time: datetime | None = None):
     """
     FOLYAMATOS AUTOMATA (nem áll le):
       - figyeli a visszaszámlálót, és akkor lép be a giveawaybe, amikor a
@@ -587,6 +587,7 @@ def main():
     time.sleep(STARTUP_WAIT)
 
     join_target = ask_join_target()
+    start_time = datetime.now()
 
     with sync_playwright() as p:
         browser = None
@@ -612,7 +613,7 @@ def main():
 
         try:
             open_target_page(page)
-            run_scraper_logic(page, join_target)
+            run_scraper_logic(page, join_target, start_time)
         except PWTimeoutError as e:
             typewriter(f"[ERROR] Időtúllépés az oldal/elem várásakor: {e}")
         except Exception as e:

@@ -1,13 +1,18 @@
-# scraper.py – Opera GX webscraper (keydrop amateur giveaway)
+# scraper.py – Opera GX webscraper (csatlakozás a futó böngészőhöz, új lap)
 
 Ez a script a régi `clicker.py` helyett **webscraper stílusban** dolgozik:
-nem a képernyőt figyeli (pyautogui/képfelismerés), hanem megnyit egy valódi
-**Opera GX** böngészőt, és a böngésző DOM-ját olvassa/vezérli.
+nem a képernyőt figyeli (pyautogui/képfelismerés), hanem **csatlakozik a már
+futó Opera GX-hez** (Chrome DevTools Protocol), és abban **nyit egy új lapot**,
+amit aztán közvetlenül vezérel/olvas.
 
-## Mit csinál most
-1. Megnyitja az Opera GX-et (látható ablakban).
-2. Betölti: `https://keydrop.com/hu/giveaways/amateur`
-3. A további lépéseket a `run_scraper_logic()` függvénybe írom, amikor
+## Mit csinál
+1. Megpróbál csatlakozni a futó Opera GX-hez a `--remote-debugging-port` (9222)
+   kapcsolóval.
+2. Ha nincs ilyen, a script elindítja az Opera GX-et ugyanazon a porton (ugyanaz
+   a profilod / bejelentkezésed), és abban nyitja az új lapot.
+3. A meglévő ablakban új lapot nyit, betölti:
+   `https://keydrop.com/hu/giveaways/amateur`
+4. A további lépéseket a `run_scraper_logic()` függvénybe írom, amikor
    elmondod, mit kell az oldalon csinálni.
 
 ## Telepítés (saját gépen)
@@ -20,13 +25,24 @@ playwright install chromium     # Opera GX hiányában ez a tartalék böngész�
 ```bash
 python scraper.py
 ```
-Ha nincs automatikusan megtalálva az Opera GX, add meg az útvonalát:
-```bash
-OPERA_GX_PATH="C:\Users\TeNeved\AppData\Local\Opera Software\Opera GX Stable\opera.exe" python scraper.py
+
+### A már megnyitott Opera GX-hez csatlakozás
+A böngészőt **távoli vezérléssel** kell indítani, különben a script nem tud
+rácsatlakozni (ilyenkor saját maga indít egyet). A Te gépeden:
+```bat
+"C:\Users\Marci\AppData\Local\Programs\Opera GX\opera.exe" --remote-debugging-port=9222
 ```
+Ezután futtasd a `python scraper.py`-t – a script a futó ablakban nyit új lapot,
+és a végén NEM zárja be a böngészőt.
 
 ## Fontosabb beállítások (scraper.py teteje)
-- `HEADLESS = False` – látható Opera GX ablak (így kérted).
-- `KEEP_BROWSER_OPEN = True` – nyitva hagyja az ablakot Enterig.
+- `REMOTE_DEBUG_PORT = 9222` – a CDP port.
+- `ATTACH_TO_RUNNING = True` – először a futó böngészőhöz próbál csatlakozni.
+- `HEADLESS = False` – látható ablak.
+- `KEEP_BROWSER_OPEN = True` – ha mi indítottuk, nyitva hagyja Enterig.
 - `TARGET_URL` – az oldal, amit megnyit.
-- `ABORT_ON_ESC` – ESC-re leáll (mint a régi clicker.py).
+- `OPERA_GX_PATH` – ha nem találná automatikusan, add meg környezeti változóval:
+  ```bat
+  set OPERA_GX_PATH="C:\Users\Marci\AppData\Local\Programs\Opera GX\opera.exe"
+  python scraper.py
+  ```

@@ -323,11 +323,14 @@ def ask_skip_config():
     Egyszer kérdezi meg: hány körönként hány játékot hagyjon ki.
     Formátum: JÁTÉKOK-KIHAGYANDÓ, pl. 3-4-1-2 (3-4 játék után 1-2 kihagyás).
     Egyszerűbb: 4-1 = 4 játék után 1 kihagyás. Üres = sosem hagy ki.
+    A kihagyott körben a bot NEM lép be (belépési cél: -1s), csak a kör
+    végéig (a nyertes kipörgéséig) vár, aztán tovább a következő körre.
     """
     typewriter("=" * 60)
     typewriter(" BEÁLLÍTÁS: körök kihagyása (opcionális)")
     typewriter(" Formátum: játékok-kihagyandó, pl. 3-4-1-2 (3-4 kör után 1-2 kihagyás)")
     typewriter(" Egyszerűbb: 4-1 = 4 kör után 1 kihagyás. Üres = nincs kihagyás")
+    typewriter(" Kihagyott körben nem lép be (cél: -1s), csak a kör végéig vár.")
     typewriter("=" * 60)
     while True:
         try:
@@ -508,15 +511,23 @@ def wait_for_winner(page: Page, poll: int = 1) -> bool:
     return False
 
 
-def wait_until_join(page: Page, target: int, poll: int = 1) -> str:
+def wait_until_join(page: Page, target: int, poll: int = 1, label: str = "[ENTRY]") -> str:
     """
     Figyeli az élő visszaszámlálót, és akkor tér vissza 'join'-nel, amikor a
     hátralévő idő <= target (mp). Ha a giveaway még nem indult el (a gomb egy
     'múlva' visszaszámlálót mutat), 'not_started'-dal tér vissza (hiba jelezve).
     Ha közben kipörgetik a nyertest, 'winner'-t ad vissza; ESC esetén 'esc'-t.
     Mozgó időzítőt ír ki (ugyanazon a soron).
+
+    target < 0 esetén (pl. -1s, KIHAGYOTT KÖR) a 'join' SOHA nem érhető el:
+    a visszaszámláló nem lesz soha <= -1, tehát a függvény addig figyel,
+    amíg a kör véget nem ér (a nyertest kipörgetik) – így egy kihagyott
+    körben a script biztosan NEM lép be a giveawaybe.
     """
-    typewriter(f"[WAIT] Várakozás a belépési időpontra (cél: <= {target}s hátralévő)...")
+    if target < 0:
+        typewriter("[WAIT] KIHAGYOTT KÖR – belépési cél: -1s, ez a körben NEM lépünk be! (várakozás a kör végéig, a nyertes kipörgéséig)...")
+    else:
+        typewriter(f"[WAIT] Várakozás a belépési időpontra (cél: <= {target}s hátralévő)...")
     last = None
     last_notstart = None
     while True:
@@ -554,7 +565,7 @@ def wait_until_join(page: Page, target: int, poll: int = 1) -> str:
                 return "join"
 
         if t and t != last:
-            print_timer(f"[ENTRY] Hátralévő idő: {t}  (cél: {target}s)")
+            print_timer(f"{label} Hátralévő idő: {t}  (cél: {target}s)")
             last = t
 
         time.sleep(poll)
@@ -613,7 +624,9 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, s
       - kiírja a hátralévő időt (mozgó időzítővel),
       - amikor kipörgetik a nyertest, kiírja a nyertest + a nyert skin
         kategóriáját/nevét/árát (és elmenti a figyelt nyerteseket),
-      - ha be van állítva: x körönként y kört kihagy (nem lép be),
+      - ha be van állítva: x körönként y kört kihagy – a kihagyott körben a
+        belépési cél -1s, tehát SOHA nem kattint a csatlakozás gombra, csak
+        a kör végéig (a nyertes kipörgéséig) vár,
       - frissíti az oldalt és újra belép (új kör).
     ESC-re leáll (ha ABORT_ON_ESC = True).
     """
@@ -642,12 +655,9 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, s
             break
 
         round_no += 1
-        typewriter("")
-        typewriter("-" * 60)
-        typewriter(f" KÖR #{round_no} – belépés a giveawaybe")
-        typewriter("-" * 60)
 
-        # --- kihagyási ciklus ---
+        # --- kihagyási ciklus: eldöntjük, EZ a kör kihagyandó-e ---
+        do_skip = False
         if skip_cfg:
             if phase == "play" and phase_remaining <= 0:
                 phase = "skip"
@@ -655,14 +665,31 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, s
             elif phase == "skip" and phase_remaining <= 0:
                 phase = "play"
                 phase_remaining = random.randint(play_lo, play_hi)
-            if phase == "skip":
-                typewriter(f"[SKIP] Kör kihagyva (kihagyások hátra: {phase_remaining}).")
-                phase_remaining -= 1
-                page.reload(wait_until="domcontentloaded")
-                time.sleep(2)
-                continue
-            else:
-                phase_remaining -= 1
+            do_skip = (phase == "skip")
+
+        # célidő feloldása:
+        #  - játszott kör: fix érték, vagy tartományból minden körben random
+        #  - kihagyott kör: -1s -> a visszaszámláló soha nem lesz <= -1,
+        #    tehát a 'join' soha nem éri el: ez a körben NEM lépünk be!
+        if do_skip:
+            target = -1
+        elif isinstance(join_target, tuple):
+            lo, hi = join_target
+            target = random.randint(min(lo, hi), max(lo, hi))
+        else:
+            target = join_target
+
+        typewriter("")
+        typewriter("-" * 60)
+        if do_skip:
+            typewriter(f" KÖR #{round_no} – KIHAGYVA (ez a körben nem lép be)")
+            typewriter("-" * 60)
+            typewriter(f"[SKIP] Kör kihagyva (kihagyások hátra: {phase_remaining}).")
+        else:
+            typewriter(f" KÖR #{round_no} – belépés a giveawaybe")
+            typewriter("-" * 60)
+        if skip_cfg:
+            phase_remaining -= 1  # minden körben pontosan egyszer csökken
 
         # futásidő + indítás ideje (HH:MM, nullákkal padded: 09:05, ne 9:5)
         if start_time is None:
@@ -673,32 +700,46 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, s
         start_str = start_time.strftime("%H:%M")
         typewriter(f"[INFO] A script {run_h} óra {run_m} perce fut  [indítva: {start_str}]")
 
-        # célidő feloldása (tartomány => minden körben random)
-        if isinstance(join_target, tuple):
-            lo, hi = join_target
-            target = random.randint(min(lo, hi), max(lo, hi))
-        else:
-            target = join_target
-
-        # 0) Várakozás a belépési időpontra: figyeljük a visszaszámlálót
-        status = wait_until_join(page, target)
-        if status == "esc":
-            typewriter("[ESC] Kilépés a várakozásból.")
-            break
-
-        if status == "winner":
-            # már kipörgettek a betöltéskor
-            typewriter("[INFO] A nyertes már látható a betöltéskor.")
-            report_winner(page)
-        elif status == "not_started":
+        # 0) Várakozás: játszott körnél a belépési időpontra, kihagyott körnél
+        #    a kör végéig (target=-1 -> 'join' soha nem jön, csak 'winner'/'esc')
+        wlabel = "[SKIP]" if do_skip else "[ENTRY]"
+        status = wait_until_join(page, target, label=wlabel)
+        while status == "not_started":
             # a giveaway még nem indult el (hiba már jelezve a wait_until_join-ben)
+            # -> UGYANENNEK a körnek a keretében várunk és újrapróbálkozunk,
+            #    a kihagyási fázist NEM futtatjuk újra (ne fogyjon ki belőle kör!)
             if ABORT_ON_ESC and _esc_pressed():
+                status = "esc"
                 break
             typewriter("[WAIT] Várakozás a giveaway indítására – újrapróbálkozás...")
             time.sleep(15)
             page.reload(wait_until="domcontentloaded")
             time.sleep(2)
+            status = wait_until_join(page, target, label=wlabel)
+
+        if status == "esc":
+            typewriter("[ESC] Kilépés a várakozásból.")
+            break
+
+        if do_skip:
+            # KIHAGYOTT KÖR: itt 'join' nem jöhet (target=-1), a kör a nyertes
+            # kipörgésével ért véget. A csatlakozás gombra NEM kattintunk.
+            # A nyertest kiírjuk/mentjük (figyelt nyertesek miatt is), aztán
+            # frissítünk és tovább a következő körre.
+            if status == "winner":
+                typewriter("[SKIP] Kihagyott kör véget ért – nyertes kipörgetve, nem léptünk be.")
+                report_winner(page)
+            else:
+                typewriter("[SKIP] Kihagyott kör véget ért, nem léptünk be.")
+            typewriter("[REFRESH] Oldal frissítése, következő kör...")
+            page.reload(wait_until="domcontentloaded")
+            time.sleep(2)
             continue
+
+        if status == "winner":
+            # már kipörgettek a betöltéskor
+            typewriter("[INFO] A nyertes már látható a betöltéskor.")
+            report_winner(page)
         else:
             # 1) Belépés a giveawaybe (elérte a cél hátralévő időt)
             ok = click_join(page)

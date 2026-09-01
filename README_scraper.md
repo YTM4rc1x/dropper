@@ -14,9 +14,10 @@ amit aztán közvetlenül vezérel/olvas.
    `https://keydrop.com/hu/giveaways/amateur`
 4. Folyamatos automata (`run_scraper_logic`):
    - indításkor **egyszer megkérdezi, hány mp hátralévőkor lépjen be**
-     (pl. `30s`, `1m`, `1m30s`). Figyeli az élő visszaszámlálót, és akkor
-     kattint a **Csatlakozás Nyereményjátékhoz** gombra, amikor a hátralévő
-     idő eléri a célt (pl. `30s` = 30 mp hátralévőkor),
+     (pl. `30s`, `1m`, `1m30s`, vagy tartomány: `1s-1m` -> minden körben
+     véletlenszerűen a két érték között). Figyeli az élő visszaszámlálót, és
+     akkor kattint a **Csatlakozás Nyereményjátékhoz** gombra, amikor a
+     hátralévő idő eléri a célt (pl. `30s` = 30 mp hátralévőkor),
    - kiírja a **hátralévő időt** (mozgó időzítővel, nem új sorba írja),
    - amikor kipörgetik a nyertest, kiírja a **nyertes nevét** és a **nyert
      skin kategóriáját / nevét / árát** egy fix szélességű dobozban,
@@ -25,6 +26,18 @@ amit aztán közvetlenül vezérel/olvas.
    - **frissíti az oldalt és újra belép** a következő körben.
    ESC-re leáll (ha `ABORT_ON_ESC = True`). A konzol minden nyertes után
    törlődik, így csak a legfrissebb nyertes látszik.
+
+## Körök kihagyása (skip)
+Indításkor (opcionálisan) megadhatod, hogy a bot x kör után y kört hagyjon ki:
+- Formátum: `játékok-kihagyandó`, pl. `3-4-1-2` (3-4 kör után 1-2 kihagyás)
+  vagy egyszerűbben `4-1` (4 kör után 1 kihagyás). Üres = sosem hagy ki.
+- A **kihagyott körben a bot NEM lép be a giveawaybe**: a belépési cél
+  `-1s`-re áll, amit a visszaszámláló soha nem éri el, így a csatlakozás
+  gombra **nem kattint**. A bot a kör végéig (a nyertes kipörgéséig) vár,
+  a nyertest kiírja/elmenti (így a figyelt nyertesek kihagyott körben is
+  rögzülnek), aztán frissít és tovább a következő körre.
+- A konzol így jelzi: `KÖR #X – KIHAGYVA (ez a körben nem lép be)` +
+  `[SKIP] Hátralévő idő: 00:02:25 (cél: -1s)`.
 
 ## Telepítés (saját gépen)
 ```bash

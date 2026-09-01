@@ -216,6 +216,11 @@ WATCHED_WINNERS = {
     "1r4z1": "1r4z1.txt",
 }
 
+# Eddigi nyeremény-összegek játékonként (EUR) – a WATCHED_WINNERS kulcsai szerint.
+# Indításkor a meglévő txt fájlokból betöltődik (load_win_totals), futás közben
+# minden elmentett nyeréssel nő (report_winner).
+WIN_TOTALS = {name: 0.0 for name in WATCHED_WINNERS}
+
 
 def parse_duration(text: str) -> int | None:
     """
@@ -385,6 +390,70 @@ def save_win(player: str, category: str, name: str, price: str) -> str | None:
     except Exception as e:
         typewriter(f"[WIN] Mentés sikertelen ({fname}): {e}")
         return None
+
+
+def parse_price(text: str) -> float | None:
+    """
+    Ár-szöveget parse-ol euróra. Kezeli az európai formátumokat is:
+    '1,86 EUR', '1.86 €', '1 234,56 EUR', '1.234' (ezres), '90'.
+    None, ha nem található értelmezhető szám.
+    """
+    if not text:
+        return None
+    # először az ezreselválasztós, utána az egyszerű szám
+    m = re.search(r"\d{1,3}(?:[ .\u00a0]\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?", text)
+    if not m:
+        return None
+    s = re.sub(r"[\s\u00a0]", "", m.group(0))
+    if "," in s and "." in s:
+        # az utolsó elválasztó a tizedjel
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
+    elif "." in s:
+        parts = s.split(".")
+        # '1.234' / '1.234.567' -> ezres elválasztó, nem tized
+        if len(parts) > 1 and len(parts[0]) <= 3 and all(len(p) == 3 for p in parts[1:]):
+            s = s.replace(".", "")
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def fmt_eur(value: float) -> str:
+    """0.0 -> '0,00 €'; 1234.5 -> '1 234,50 €' (magyar formátum)."""
+    s = f"{value:,.2f}".replace(",", " ").replace(".", ",")
+    return f"{s} €"
+
+
+def load_win_totals():
+    """
+    Beolvassa a meglévő nyertest-fájlokat, és onnan összeadja az eddigi
+    nyereményeket – így újraindítás után is a TÖBBET mutatja, nem csak az
+    aktuális futásbelit. A fájl sora: '... | ár 1,86 EUR' -> a 'ár ' utáni részt parse-olja.
+    """
+    base = os.path.dirname(os.path.abspath(__file__))
+    for player, fname in WATCHED_WINNERS.items():
+        path = os.path.join(base, fname)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    if "ár " not in line:
+                        continue
+                    val = parse_price(line.rsplit("ár ", 1)[1])
+                    if val:
+                        WIN_TOTALS[player] += val
+        except Exception:
+            pass
+    for player, val in WIN_TOTALS.items():
+        if val > 0:
+            typewriter(f"[INFO] Eddig nyert pénz ({player}): {fmt_eur(val)} – a meglévő fájlból beolvasva")
 
 
 def _esc_pressed() -> bool:
@@ -608,11 +677,20 @@ def report_winner(page: Page):
     typewriter(bot)
     typewriter("")
 
-    # --- mentés, ha figyelt nyertes nyert ---
+    # --- mentés, ha figyelt nyertes nyert + eddigi nyeremény összegzése ---
     if winner and winner.lower() in WATCHED_WINNERS:
         fname = save_win(winner, category, name, price)
         if fname:
             typewriter(f"[WIN] {winner} nyert! Elmentve ide: {fname}")
+            val = parse_price(price)
+            if val is not None:
+                WIN_TOTALS[winner.lower()] += val
+                typewriter(
+                    f"[WIN] Eddig nyert pénz: {winner} = {fmt_eur(WIN_TOTALS[winner.lower()])}"
+                    f" | összesen: {fmt_eur(sum(WIN_TOTALS.values()))}"
+                )
+            else:
+                typewriter(f"[WARN] Az ár nem olvasható ki ('{price}') – nem lett hozzáadva az összeghez.")
 
 
 def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, skip_cfg=None):
@@ -699,6 +777,11 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, s
         run_h, run_m = divmod(total_min, 60)
         start_str = start_time.strftime("%H:%M")
         typewriter(f"[INFO] A script {run_h} óra {run_m} perce fut  [indítva: {start_str}]")
+        # eddigi nyeremény (figyelt nyertesek), játékonkénti bontással
+        tot = sum(WIN_TOTALS.values())
+        parts = [f"{p}: {fmt_eur(v)}" for p, v in WIN_TOTALS.items() if v > 0]
+        suffix = f"  ({' | '.join(parts)})" if parts else ""
+        typewriter(f"[INFO] Eddig nyert pénz : {fmt_eur(tot)}{suffix}")
 
         # 0) Várakozás: játszott körnél a belépési időpontra, kihagyott körnél
         #    a kör végéig (target=-1 -> 'join' soha nem jön, csak 'winner'/'esc')
@@ -814,6 +897,7 @@ def main():
 
         try:
             open_target_page(page)
+            load_win_totals()
             run_scraper_logic(page, join_target, start_time, skip_cfg)
         except PWTimeoutError as e:
             typewriter(f"[ERROR] Időtúllépés az oldal/elem várásakor: {e}")

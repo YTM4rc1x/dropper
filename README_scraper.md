@@ -61,6 +61,11 @@ amit aztán közvetlenül vezérel/olvas.
 - Működik **VSCode terminálban** és **sima Windows konzolban** (cmd,
   PowerShell, Windows Terminal – Windows 10+; a script indításkor
   automatikusan bekapcsolja a Windows ANSI/VT színeket).
+- A `[SKIN] Jelenlegi nyeremény: ...` sor a **skin rarity színére** fest:
+  az oldalról leolvassa a kártya alján futó 1px-es színes vonalat
+  (pl. piros = Covert) és azzal festi a sort. Beállítás: `SKIN_COLOR_MODE`
+  (`"truecolor"` = pontos szín – Windows Terminal/VSCode; `"16"` = a
+  legközelebbi alapszín, régebbi konzolhoz; `"off"` = a sima cián).
 - Ha a színeket kikapcsolnád (pl. régebbi Windows-on furcsa karakterek
   jönnek), a `scraper.py` tetején: `ENABLE_COLORS = False`.
 
@@ -91,6 +96,7 @@ Ezután futtasd a `python scraper.py`-t – a script a futó ablakban nyit új l
 - `KEEP_BROWSER_OPEN = True` – ha mi indítottuk, nyitva hagyja Enterig.
 - `TARGET_URL` – az oldal, amit megnyit.
 - `ENABLE_COLORS` – konzol színezés be/kikapcsolása (alapértelmezés: be).
+- `SKIN_COLOR_MODE` – a [SKIN] sor rarity-színe: `"truecolor"` / `"16"` / `"off"`.
 - `OPERA_GX_PATH` – ha nem találná automatikusan, add meg környezeti változóval:
   ```bat
   set OPERA_GX_PATH="C:\Users\Marci\AppData\Local\Programs\Opera GX\opera.exe"

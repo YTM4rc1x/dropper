@@ -99,8 +99,40 @@ _TAG_COLORS = {
     "ARROW":   "\033[90m",
     "CLICK":   "\033[90m",
 }
+# A [SKIN] sor színe: az oldalról leolvasott skin rarity színe (pl. piros).
+#   "truecolor" – pontos RGB szin (Windows Terminal, VSCode, PowerShell 7)
+#   "16"        – a legközelebbi alap-16 szin (régebbi Windows konzolhoz)
+#   "off"       – nincs külön szin (marad a cián [SKIN] szin)
+SKIN_COLOR_MODE = "truecolor"
+
 _COLOR_RESET = "\033[0m"
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+# Az alap-16 ANSI szin (xterm paletta) a "16" módhoz.
+_ANSI16_RGB = [
+    (0, 0, 0), (205, 0, 0), (0, 205, 0), (205, 205, 0),
+    (0, 0, 238), (205, 0, 205), (0, 205, 205), (229, 229, 229),
+    (127, 127, 127), (255, 0, 0), (0, 255, 0), (255, 255, 0),
+    (92, 92, 255), (255, 0, 255), (0, 255, 255), (255, 255, 255),
+]
+
+
+def _rgb_to_ansi(rgb: str) -> str | None:
+    """'r,g,b' -> ANSI elsoszín kód. None, ha nem olvasható/érvénytelen."""
+    try:
+        r, g, b = (int(x) for x in rgb.split(","))
+    except Exception:
+        return None
+    if not (0 <= r < 256 and 0 <= g < 256 and 0 <= b < 256):
+        return None
+    if SKIN_COLOR_MODE == "16":
+        best, best_d = 1, 10**9
+        for i, (rr, gg, bb) in enumerate(_ANSI16_RGB):
+            d = (r - rr) ** 2 + (g - gg) ** 2 + (b - bb) ** 2
+            if d < best_d:
+                best, best_d = i, d
+        return f"\033[38;5;{best}m"
+    return f"\033[38;2;{r};{g};{b}m"
 
 
 def _visible_len(s: str) -> int:
@@ -108,19 +140,23 @@ def _visible_len(s: str) -> int:
     return len(_ANSI_RE.sub("", s))
 
 
-def _paint(text: str) -> str:
+def _paint(text: str, override_color: str | None = None) -> str:
     """
     A sor eleji [TAG]-re (vagy a külön sorokra) ANSI színt tesz.
+    Ha override_color meg van adva (pl. az oldalról olvasott rarity szin),
+    az érvényes a [TAG] színe helyett.
     Ha ENABLE_COLORS = False vagy nincs ismert tag, visszatér a szöveggel.
     """
     if not ENABLE_COLORS:
         return text
+    color = None
     m = re.match(r"^\[([A-Z]+)\]", text)
     if m:
-        color = _TAG_COLORS.get(m.group(1))
-        if color:
-            return f"{color}{text}{_COLOR_RESET}"
-        return text
+        color = override_color or _TAG_COLORS.get(m.group(1))
+    elif override_color:
+        color = override_color
+    if color:
+        return f"{color}{text}{_COLOR_RESET}"
     stripped = text.strip()
     if text.startswith(" KÖR #"):
         return f"\033[1;97m{text}{_COLOR_RESET}"  # félkövér fehér
@@ -152,9 +188,9 @@ def _enable_ansi():
 
 # ----------------------------------------------------------------------
 
-def typewriter(text: str):
+def typewriter(text: str, override_color: str | None = None):
     """Konzol kimenet – a [TAG]-ek színesek (ha ENABLE_COLORS = True)."""
-    print(_paint(text))
+    print(_paint(text, override_color))
 
 
 def find_opera_gx_executable() -> str | None:
@@ -670,6 +706,55 @@ def read_current_prize(page: Page):
     return full.strip(), _clean(price_txt), price_val
 
 
+# A skin rarity színe a kártyáról: a kártya alján futó 1px-es színes vonal
+# (pl. <div class="absolute inset-x-7 bottom-px h-px"
+#           style="background-color: rgb(254, 71, 96);"></div>)
+_JS_RARITY_COLOR = r"""
+(btnSel) => {
+  const parse = (el) => {
+    if (!el) return null;
+    let m = /rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/i.exec(el.getAttribute("style") || "");
+    if (!m) {
+      const cs = getComputedStyle(el);
+      m = /rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/i.exec(cs.backgroundColor || "");
+    }
+    return m ? (m[1] + "," + m[2] + "," + m[3]) : null;
+  };
+  const strip = 'div[class*="bottom-px"][style*="background-color"]';
+  // 1) a belépő gomb kártyáján belül (a JELÉNTI giveaway kártyája)
+  let el = document.querySelector(btnSel);
+  for (let i = 0; el && i < 6; i++) {
+    const d = el.querySelector(strip);
+    if (d) {
+      const c = parse(d);
+      if (c) return c;
+    }
+    el = el.parentElement;
+  }
+  // 2) bárhol az oldalon
+  const any = document.querySelector('div[class*="inset-x-7"][class*="bottom-px"][style*="background-color"]')
+           || document.querySelector(strip);
+  return parse(any);
+}
+"""
+
+
+def read_skin_rarity_color(page: Page):
+    """
+    A skin rarity színét olvassa ki az oldalról (a kártya alján futó
+    1px-es színes vonal, pl. piros = Covert).
+    Visszaad: 'r,g,b' sztring, ha nem olvasható, akkor None.
+    (Ha a színezés ki van kapcsolva, egyből None – nem is kérdezi az oldalt.)
+    """
+    if not ENABLE_COLORS or SKIN_COLOR_MODE == "off":
+        return None
+    try:
+        rgb = page.evaluate(_JS_RARITY_COLOR, JOIN_BTN)
+    except Exception:
+        return None
+    return rgb if isinstance(rgb, str) and rgb.count(",") == 2 else None
+
+
 def giveaway_not_started(page: Page) -> bool:
     """
     True, ha a giveaway még nem indult el (a csatlakozás gomb egy 'múlva'
@@ -924,12 +1009,19 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, m
         suffix = f"  ({' | '.join(parts)})" if parts else ""
         typewriter(f"[INFO] Eddig nyert pénz : {fmt_eur(tot)}")
         # a JELENTI (még nyerhető) skin + ára – így látszik, mit olvas a bot
+        # a sor színe = az oldalról leolvasott skin rarity színe (pl. piros)
+        skin_rarity = None
+        if not not_started:
+            rgb_now = read_skin_rarity_color(page)
+            skin_rarity = _rgb_to_ansi(rgb_now) if rgb_now else None
         if not_started:
             typewriter("[SKIN] A giveaway még nem indult el – a min-ár ellenőrzést a belépési pillanatban teszem meg.")
         elif price_val_now is not None:
-            typewriter(f"[SKIN] Jelenlegi nyeremény: {skin_now or '?'} – {fmt_eur(price_val_now)}")
+            typewriter(f"[SKIN] Jelenlegi nyeremény: {skin_now or '?'} – {fmt_eur(price_val_now)}",
+                       override_color=skin_rarity)
         elif price_txt_now or skin_now:
-            typewriter(f"[SKIN] Jelenlegi nyeremény: {skin_now or '?'} – {price_txt_now or '?'}")
+            typewriter(f"[SKIN] Jelenlegi nyeremény: {skin_now or '?'} – {price_txt_now or '?'}",
+                       override_color=skin_rarity)
         else:
             typewriter("[SKIN] A jelenlegi nyeremény (név/ár) most nem olvasható ki.")
 

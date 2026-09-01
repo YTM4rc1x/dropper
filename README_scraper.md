@@ -21,13 +21,14 @@ amit aztán közvetlenül vezérel/olvas.
    - kiírja a **hátralévő időt** (mozgó időzítővel, nem új sorba írja),
    - amikor kipörgetik a nyertest, kiírja a **nyertes nevét** és a **nyert
      skin kategóriáját / nevét / árát** egy fix szélességű dobozban,
-   - ha a nyertes `YTM4rc1x` vagy `1r4z1`, elmenti a nyerést a saját
-     `YTM4rc1x.txt` / `1r4z1.txt` fájlba (dátum, óra:perc, skin, ár),
-   - **Eddig nyert pénz**: a figyelt nyertesek összes elmentett nyereményét
+   - ha a nyertes `YTM4rc1x` (figyelt nyertesek listája a
+     `WATCHED_WINNERS`-ben a script tetején), elmenti a nyerést a
+     `YTM4rc1x.txt` fájlba (dátum, óra:perc, skin, ár),
+   - **Eddig nyert pénz**: a figyelt nyertes összes elmentett nyereményét
      összeadja, és minden körben kiírja (`[INFO] Eddig nyert pénz : 12,34 €`).
-     Indításkor a meglévő `YTM4rc1x.txt` / `1r4z1.txt` fájlokból betölti az
+     Indításkor a meglévő `YTM4rc1x.txt` fájlból betölti az
      eddigi összeget (újraindítás után sem nullázódik), és minden új
-     elmentett nyeréssel hozzáadja az árhoz,
+     elmentett nyeréssel hozzáadja az árhoz.
    - **frissíti az oldalt és újra belép** a következő körben.
    ESC-re leáll (ha `ABORT_ON_ESC = True`). A konzol minden nyertes után
    törlődik, így csak a legfrissebb nyertes látszik.
@@ -39,21 +40,29 @@ amit aztán közvetlenül vezérel/olvas.
   csatlakozás gomb körüli kártya szövege (JS fallback, az első "X EUR"
   értéket veszi ki a gomb szövegét kivágva).
 - Indításkor megadhatod a minimum nyeremény-árat (EUR, pl. `5` vagy `10,5`).
-  A **döntés azonnal a kör elején** történik, és a logban látszik:
-  - ha az ár **>= minimum** → belép a giveawaybe a célidő elérésénél
-    (`[PRICE] AK-47 | Aphrodite – 37,55 € >= minimum 37,00 € – belemegyek.`),
+  A **döntés azonnal a kör elején** történik, és a kör fejlécében látszik:
+  - ha az ár **>= minimum** → a fejléc a szokásos
+    `KÖR #X – belépés a giveawaybe`, és a bot a célidő elérésénél belép;
   - ha az ár **< minimum** → a kör fejléce már az elején
     `KÖR #X – NEM LÉP BE (a skin ára < minimum 38,00 €)`, és a bot a kör
     végéig (a nyertes kipörgéséig) vár, nem kattint, a nyertest
-    kiírja/menti, aztán tovább a következőre
-    (`[PRICE] AK-47 | Aphrodite – 37,55 € < minimum 38,00 € – ez a körben
-    NEM lépek be...`),
+    kiírja/menti, aztán tovább a következőre;
   - ha a kör elején nem olvasható az ár (pl. a giveaway még nem indult el)
     → a döntés a belépési pillanatban történik; ha akkor sem olvasható,
     belép (biztonsági alaphelyzet, `[WARN]`-rel).
 - Fontos: a minimum a **lefelső határ** – pl. minimum 37-nél a 37,55 €-os
   skin BELÉP (mert 37,55 >= 37). Ha azt a skint is ki akarod zárni, 38-ra
   (vagy 37,56-ra) állítsd a minimumot.
+
+## Konzol színezés
+- A `[TAG]-ek` (pl. `[INFO]`, `[SKIN]`, `[TIME]`, `[JOIN]`, `[ERROR]`)
+  színesek: minden tag egy saját színt kap (infó cián, skin félkövér cián,
+  időzítő zöld, hiba félkövér piros stb.).
+- Működik **VSCode terminálban** és **sima Windows konzolban** (cmd,
+  PowerShell, Windows Terminal – Windows 10+; a script indításkor
+  automatikusan bekapcsolja a Windows ANSI/VT színeket).
+- Ha a színeket kikapcsolnád (pl. régebbi Windows-on furcsa karakterek
+  jönnek), a `scraper.py` tetején: `ENABLE_COLORS = False`.
 
 ## Telepítés (saját gépen)
 ```bash
@@ -81,6 +90,7 @@ Ezután futtasd a `python scraper.py`-t – a script a futó ablakban nyit új l
 - `HEADLESS = False` – látható ablak.
 - `KEEP_BROWSER_OPEN = True` – ha mi indítottuk, nyitva hagyja Enterig.
 - `TARGET_URL` – az oldal, amit megnyit.
+- `ENABLE_COLORS` – konzol színezés be/kikapcsolása (alapértelmezés: be).
 - `OPERA_GX_PATH` – ha nem találná automatikusan, add meg környezeti változóval:
   ```bat
   set OPERA_GX_PATH="C:\Users\Marci\AppData\Local\Programs\Opera GX\opera.exe"

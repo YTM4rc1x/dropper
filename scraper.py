@@ -36,7 +36,7 @@ from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page, 
 # BEÁLLÍTÁSOK (ezeket nyugodtan átírhatod)
 # ----------------------------------------------------------------------
 
-TARGET_URL = "https://keydrop.com/hu/giveaways/amateur"
+TARGET_URL = "https://keydrop.com/hu/giveaways/contender"
 
 # A távoli vezérlő (Chrome DevTools Protocol) portja.
 # A futó Opera GX-nek ezen a porton kell figyelnie (--remote-debugging-port=...).
@@ -68,10 +68,93 @@ KEEP_BROWSER_OPEN = True
 OPERA_GX_PATH = os.environ.get("OPERA_GX_PATH", "")
 
 # ----------------------------------------------------------------------
+# KONZOL SZÍNEZÉS (ANSI)
+# ----------------------------------------------------------------------
+# True = színes kimenet. A [TAG]-ek (pl. [INFO], [SKIN], [TIME]) színre
+# festve jelennek meg. Működik: Windows 10+ (cmd/PowerShell/Windows
+# Terminal), VSCode terminál, Linux. Régebbi Windows-on, ha furcsa
+# karakterek (pl. "^[") bukkannak fel, állítsd False-ra (sima kimenet).
+ENABLE_COLORS = True
+
+# Tag -> ANSI szin. (9x = "fényes" változat, 1; = félkövér)
+_TAG_COLORS = {
+    "INFO":    "\033[96m",   # fényes cián
+    "OK":      "\033[92m",   # fényes zöld
+    "WAIT":    "\033[33m",   # sárga
+    "TIME":    "\033[92m",   # fényes zöld
+    "ENTRY":   "\033[36m",   # cián
+    "JOIN":    "\033[1;92m", # félkövér zöld
+    "SKIN":    "\033[1;96m", # félkövér cián
+    "PRICE":   "\033[1;93m", # félkövér sárga
+    "WIN":     "\033[1;94m", # félkövér kék
+    "WINNER":  "\033[94m",   # kék
+    "REFRESH": "\033[90m",   # szürke
+    "RETRY":   "\033[33m",   # sárga
+    "WARN":    "\033[93m",   # fényes sárga
+    "ERROR":   "\033[1;91m", # félkövér piros
+    "ESC":     "\033[95m",   # lila
+    "PAUSE":   "\033[90m",
+    "STEP":    "\033[90m",
+    "KEY":     "\033[90m",
+    "ARROW":   "\033[90m",
+    "CLICK":   "\033[90m",
+}
+_COLOR_RESET = "\033[0m"
+_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+
+def _visible_len(s: str) -> int:
+    """Látható hossz (az ANSI kódok nélkül) – a mozgó timer igazításához."""
+    return len(_ANSI_RE.sub("", s))
+
+
+def _paint(text: str) -> str:
+    """
+    A sor eleji [TAG]-re (vagy a külön sorokra) ANSI színt tesz.
+    Ha ENABLE_COLORS = False vagy nincs ismert tag, visszatér a szöveggel.
+    """
+    if not ENABLE_COLORS:
+        return text
+    m = re.match(r"^\[([A-Z]+)\]", text)
+    if m:
+        color = _TAG_COLORS.get(m.group(1))
+        if color:
+            return f"{color}{text}{_COLOR_RESET}"
+        return text
+    stripped = text.strip()
+    if text.startswith(" KÖR #"):
+        return f"\033[1;97m{text}{_COLOR_RESET}"  # félkövér fehér
+    if stripped and set(stripped) == {"="}:
+        return f"\033[90m{text}{_COLOR_RESET}"  # szürke
+    if stripped and set(stripped) == {"-"}:
+        return f"\033[90m{text}{_COLOR_RESET}"  # szürke
+    return text
+
+
+def _enable_ansi():
+    """
+    Windows konzolban engedélyezi az ANSI/VT escape kódokat (Windows 10+).
+    Linux-on / VSCode-ban nem kell semmi (ott alapból be van kapcsolva).
+    """
+    if os.name == "nt":
+        os.system("")  # ez a hívás önmagában is bekapcsolja a VT-t (Win10+)
+        try:
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            for sid in (-11, -12):  # -11 = stdout, -12 = stderr
+                h = k32.GetStdHandle(sid)
+                mode = ctypes.c_uint32()
+                if k32.GetConsoleMode(h, ctypes.byref(mode)):
+                    k32.SetConsoleMode(h, mode.value | 0x0004)  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        except Exception:
+            pass  # ha nem sikerül, legfeljebb nem lesz színes
+
+
+# ----------------------------------------------------------------------
 
 def typewriter(text: str):
-    """Konzol kimenet – ugyanaz a stílus, mint a clicker.py-ban."""
-    print(text)
+    """Konzol kimenet – a [TAG]-ek színesek (ha ENABLE_COLORS = True)."""
+    print(_paint(text))
 
 
 def find_opera_gx_executable() -> str | None:
@@ -213,7 +296,6 @@ WINNER_WAIT_TIMEOUT = 30 * 60
 # A kulcs kisbetűsen van tárolva (egyezés is kisbetűsen történik).
 WATCHED_WINNERS = {
     "ytm4rc1x": "YTM4rc1x.txt",
-    "1r4z1": "1r4z1.txt",
 }
 
 # Eddigi nyeremény-összegek játékonként (EUR) – a WATCHED_WINNERS kulcsai szerint.
@@ -338,7 +420,11 @@ def clear_console():
 
 def print_timer(text: str):
     """Mozgó időzítő: ugyanazon a soron írja át az időt (nem új sorba)."""
-    sys.stdout.write("\r" + text.ljust(80))
+    painted = _paint(text)
+    # a paddinget a LÁTHATÓ hossz alapján adjuk meg, hogy az ANSI kódok
+    # ne csúsztassák el az igazítást (a korábbi hosszabb sor maradványa
+    # teljesen le legyen írva)
+    sys.stdout.write("\r" + painted + " " * max(0, 80 - _visible_len(painted)))
     sys.stdout.flush()
 
 
@@ -488,7 +574,7 @@ def click_join(page: Page) -> bool:
 
     # Már benne vagyunk: a gomb a következő (fizetős) nevezést ajánlja.
     if "nevezést" in label or "szerezd meg" in label:
-        typewriter(f"[JOIN] Már benne vagy a giveawayben (gomb: '{raw}') – nem kattintok újra.")
+        typewriter(f"[ERROR] Már benne vagy a giveawayben (gomb: '{raw}') – nem kattintok újra.")
         return True
 
     try:
@@ -624,7 +710,7 @@ def wait_for_winner(page: Page, poll: int = 1) -> bool:
     Közben MOZGÓ időzítőt ír ki (ugyanazon a soron írja át az időt).
     ESC-re, vagy WINNER_WAIT_TIMEOUT után False-val tér vissza.
     """
-    typewriter("[WAIT] Várakozás a nyertes kipörgésére (mozgó időzítő)...")
+    typewriter("[WAIT] Várakozás a nyertes kipörgésére...")
     last = None
     waited = 0
     while waited < WINNER_WAIT_TIMEOUT:
@@ -664,7 +750,7 @@ def wait_until_join(page: Page, target: int, poll: int = 1, label: str = "[ENTRY
     körben biztosan NEM lép be a giveawaybe.
     """
     if target < 0:
-        typewriter("[WAIT] Ez a körben nem lépünk be – várakozás a kör végéig (a nyertes kipörgéséig)...")
+        typewriter("[INFO] Ebben a körben nem lépünk be – várakozás a kör végéig (a nyertes kipörgéséig)...")
     else:
         typewriter(f"[WAIT] Várakozás a belépési időpontra (cél: <= {target}s hátralévő)...")
     last = None
@@ -704,7 +790,7 @@ def wait_until_join(page: Page, target: int, poll: int = 1, label: str = "[ENTRY
                 return "join"
 
         if t and t != last:
-            print_timer(f"{label} Hátralévő idő: {t}  (cél: {target}s)")
+            print_timer(f"[TIME] Hátralévő idő: {t}  (cél: {target}s)")
             last = t
 
         time.sleep(poll)
@@ -836,7 +922,7 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, m
         tot = sum(WIN_TOTALS.values())
         parts = [f"{p}: {fmt_eur(v)}" for p, v in WIN_TOTALS.items() if v > 0]
         suffix = f"  ({' | '.join(parts)})" if parts else ""
-        typewriter(f"[INFO] Eddig nyert pénz : {fmt_eur(tot)}{suffix}")
+        typewriter(f"[INFO] Eddig nyert pénz : {fmt_eur(tot)}")
         # a JELENTI (még nyerhető) skin + ára – így látszik, mit olvas a bot
         if not_started:
             typewriter("[SKIN] A giveaway még nem indult el – a min-ár ellenőrzést a belépési pillanatban teszem meg.")
@@ -848,16 +934,16 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, m
             typewriter("[SKIN] A jelenlegi nyeremény (név/ár) most nem olvasható ki.")
 
         # a min-ár DÖNTÉS azonnali kiírása (ha most eldönthető)
-        if no_entry:
-            typewriter(
-                f"[PRICE] {skin_now or 'A skin'} – {fmt_eur(price_val_now)} < minimum {fmt_eur(min_price)}"
-                f" – ez a körben NEM lépek be, a kör végéig (a nyertesig) várok."
-            )
-        elif min_price is not None and price_val_now is not None:
-            typewriter(
-                f"[PRICE] {skin_now or 'A skin'} – {fmt_eur(price_val_now)} >= minimum {fmt_eur(min_price)}"
-                f" – belemegyek."
-            )
+        #if no_entry:
+        #    typewriter(
+        #        f"[PRICE] {skin_now or 'A skin'} – {fmt_eur(price_val_now)} < minimum {fmt_eur(min_price)}"
+        #        f" – ez a körben NEM lépek be, a kör végéig (a nyertesig) várok."
+        #    )
+        #elif min_price is not None and price_val_now is not None:
+        #    typewriter(
+        #        f"[PRICE] {skin_now or 'A skin'} – {fmt_eur(price_val_now)} >= minimum {fmt_eur(min_price)}"
+        #        f" – belemegyek."
+        #    )
 
         # célidő:
         #  - "nem lép be" kör: -1s -> a 'join' soha nem jön, a kör végéig vár
@@ -986,6 +1072,8 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, m
 
 
 def main():
+    _enable_ansi()  # Windows konzolban bekapcsolja a színeket (Win10+)
+
     if ABORT_ON_ESC:
         try:
             import keyboard  # csak importáljuk, az ESC kezelése itt nem kritikus

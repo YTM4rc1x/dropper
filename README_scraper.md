@@ -44,15 +44,23 @@ hagy ki).
 - A konzol így jelzi: `KÖR #X – KIHAGYVA (ez a körben nem lép be)` +
   `[SKIP] Hátralévő idő: 00:02:25 (cél: -1s)`.
 
-## Minimum skin-ár
-Indításkor megadhatod a minimum nyeremény-árat (EUR, pl. `5` vagy `10,5`).
-A belépési pillanatban a script kikeresi a skin árát a
-`case-roll-won-item-price` elemből:
-- ha az ár **>= minimum** → belép a giveawaybe,
-- ha az ár **< minimum** → **nem lép be**: a kör végéig (a nyertes
-  kipörgéséig) vár, a nyertest kiírja/menti, aztán tovább a következőre
-  (`[PRICE] A skin ára: 2,50 € < minimum 5,00 € – NEM lépek be...`),
-- ha az ár nem olvasható → belép (biztonsági alaphelyzet, `[WARN]`-rel).
+## Jelenlegi nyeremény kiírása + minimum skin-ár
+- Minden kör elején a script kiírja a **jelenlegi (még nyerhető) skin nevét
+  és árát**: `[SKIN] Jelenlegi nyeremény: AWP | Ice Coaled – 37,55 €`.
+  Forrás sorrend: `case-roll-won-item-*` testid-ek, ha azok üresek, akkor a
+  csatlakozás gomb körüli kártya szövege (JS fallback, az első "X EUR"
+  értéket veszi ki a gomb szövegét kivágva).
+- Indításkor megadhatod a minimum nyeremény-árat (EUR, pl. `5` vagy `10,5`).
+  A belépési pillanatban a script kikeresi a skin árát:
+  - ha az ár **>= minimum** → belép a giveawaybe
+    (`[PRICE] AWP | Ice Coaled – 37,55 € >= minimum 37,00 € – belemegyek.`),
+  - ha az ár **< minimum** → **nem lép be**: a kör végéig (a nyertes
+    kipörgéséig) vár, a nyertest kiírja/menti, aztán tovább a következőre
+    (`[PRICE] ... – 36,00 € < minimum 37,00 € – NEM lépek be...`),
+  - ha az ár nem olvasható → belép (biztonsági alaphelyzet, `[WARN]`-rel).
+- Fontos: a minimum a **lefelső határ** – pl. minimum 37-nél a 37,55 €-os
+  skin BELÉP (mert 37,55 >= 37). Ha azt a skint is ki akarod zárni, 38-ra
+  (vagy 37,56-ra) állítsd a minimumot.
 
 ## Telepítés (saját gépen)
 ```bash

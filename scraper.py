@@ -516,6 +516,80 @@ def read_time_left(page: Page) -> str:
     return m.group(0) if m else txt
 
 
+# A JELENTI (még nyerhető) skin nevét + árát a csatlakozás gomb körüli
+# kártyából olvassa ki: a gombból felfelé mászik, amíg egy "X EUR" árat
+# nem talál az adott szülőben, és az ár sorát megelőző szövegsorokat
+# a skin névként adja vissza. (A gomb saját szövegét kivágja, mert a
+# "befizetés 1,86 EUR" második-nevezés szöveget elcsaphatná.)
+_JS_CARD_PRICE = r"""
+(btnSel) => {
+  const btn = document.querySelector(btnSel);
+  if (!btn) return null;
+  const btnText = (btn.innerText || '');
+  let el = btn;
+  // max. 5 szülő: annyi elég a kártyáig, de annyi már nem, hogy a teljes
+  // oldal (vagy más giveaway kártyái) árát elkapjuk, ha a kártyában nincs
+  for (let i = 0; i < 5 && el && el.parentElement; i++) {
+    el = el.parentElement;
+    let txt = (el.innerText || '').replace(/\u00a0/g, ' ').replace(/\u00ad/g, '');
+    if (btnText) {
+      const bi = txt.indexOf(btnText);
+      if (bi >= 0) txt = txt.slice(0, bi) + txt.slice(bi + btnText.length);
+    }
+    const m = txt.match(/(\d{1,3}(?:[ .]\d{3})*(?:[.,]\d{1,2})?)\s*EUR/);
+    if (m) {
+      const idx = txt.indexOf(m[0]);
+      const before = txt.slice(0, idx).split('\n').map(s => s.trim()).filter(Boolean);
+      const clean = [];
+      for (let j = before.length - 1; j >= 0 && clean.length < 2; j--) {
+        const L = before[j];
+        if (/^\d/.test(L)) continue;
+        if (/EUR/i.test(L)) continue;
+        if (/csatlakoz|nevezés|belép/i.test(L)) continue;
+        clean.unshift(L);
+      }
+      return { price: m[0], name: clean.join(' | ') };
+    }
+  }
+  return null;
+}
+"""
+
+
+def read_current_prize(page: Page):
+    """
+    A JELENTI (még nyerhető) skin nevet és árát olvassa ki a giveaway
+    kártyáról. Sorrend:
+      1. case-roll-won-item-* testid-k (ha az oldalon jelen vannak),
+      2. ha azok üresek: a csatlakozás gomb körüli kártya szövege (JS).
+    Visszaad: (név, ár_szöveg, ár_float). A név/ár lehet üres, a float None.
+    """
+    cat = safe_inner_text(page, SKIN_CATEGORY)
+    name = safe_inner_text(page, SKIN_NAME)
+    price_txt = safe_inner_text(page, SKIN_PRICE)
+    price_val = parse_price(price_txt)
+
+    if price_val is None:
+        try:
+            res = page.evaluate(_JS_CARD_PRICE, JOIN_BTN)
+        except Exception:
+            res = None
+        if res:
+            if price_val is None and res.get("price"):
+                price_txt = res["price"]
+                price_val = parse_price(price_txt)
+            if not name:
+                name = res.get("name") or ""
+
+    def _clean(s: str) -> str:
+        return s.replace("\u00ad", "").replace("\xa0", " ").strip()
+
+    cat = _clean(cat).rstrip("|").rstrip()
+    name = _clean(name)
+    full = f"{cat} | {name}" if cat and name else (name or cat)
+    return full.strip(), _clean(price_txt), price_val
+
+
 def read_winner(page: Page) -> str:
     """
     Beolvassa a nyertes játékos nevét a winner blokkból.
@@ -710,8 +784,9 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, s
         extra += f" | kihagyás: {pl}-{ph} játék / {sl}-{sh} kihagyás"
     if min_price is not None:
         extra += f" | min skin-ár: {fmt_eur(min_price)}"
+    slug = TARGET_URL.rstrip("/").split("/")[-1].upper()
     typewriter("=" * 60)
-    typewriter(f" KEYDROP AMATEUR – AUTOMATA (belépés, amikor <= {tdisp} van hátra{extra} | ESC = kilépés)")
+    typewriter(f" KEYDROP {slug} – AUTOMATA (belépés, amikor <= {tdisp} van hátra{extra} | ESC = kilépés)")
     typewriter("=" * 60)
 
     # kihagyási ciklus állapota
@@ -779,6 +854,14 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, s
         parts = [f"{p}: {fmt_eur(v)}" for p, v in WIN_TOTALS.items() if v > 0]
         suffix = f"  ({' | '.join(parts)})" if parts else ""
         typewriter(f"[INFO] Eddig nyert pénz : {fmt_eur(tot)}{suffix}")
+        # a JELENTI (még nyerhető) skin + ára – így látszik, mit olvas a bot
+        skin_now, price_txt_now, price_val_now = read_current_prize(page)
+        if price_val_now is not None:
+            typewriter(f"[SKIN] Jelenlegi nyeremény: {skin_now or '?'} – {fmt_eur(price_val_now)}")
+        elif price_txt_now or skin_now:
+            typewriter(f"[SKIN] Jelenlegi nyeremény: {skin_now or '?'} – {price_txt_now or '?'}")
+        else:
+            typewriter("[SKIN] A jelenlegi nyeremény (név/ár) most nem olvasható ki.")
 
         # 0) Várakozás: játszott körnél a belépési időpontra, kihagyott körnél
         #    a kör végéig (target=-1 -> 'join' soha nem jön, csak 'winner'/'esc')
@@ -824,11 +907,10 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, s
             # 0.5) Minimum-ár ellenőrzés a belépés ELŐTT:
             #     ha a skin ára < minimum, nem lépünk be, a kör végéig várunk
             if min_price is not None:
-                price_txt = safe_inner_text(page, SKIN_PRICE)
-                price_val = parse_price(price_txt)
+                skin_name, price_txt, price_val = read_current_prize(page)
                 if price_val is not None and price_val < min_price:
                     typewriter(
-                        f"[PRICE] A skin ára: {fmt_eur(price_val)} < minimum {fmt_eur(min_price)}"
+                        f"[PRICE] {skin_name or 'A skin'} – {fmt_eur(price_val)} < minimum {fmt_eur(min_price)}"
                         f" – NEM lépek be, a kör végéig (a nyertesig) várok."
                     )
                     if page.locator(WINNER_AVATAR).count() > 0:
@@ -854,7 +936,7 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, s
                     )
                 else:
                     typewriter(
-                        f"[PRICE] A skin ára: {fmt_eur(price_val)} >= minimum {fmt_eur(min_price)}"
+                        f"[PRICE] {skin_name or 'A skin'} – {fmt_eur(price_val)} >= minimum {fmt_eur(min_price)}"
                         f" – belemegyek."
                     )
 
@@ -953,4 +1035,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n[ESC] Ctrl+C – kilépés.")

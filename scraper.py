@@ -24,6 +24,7 @@ Ha a MÁR MEGNYITOTT Opera GX-edhez akarsz csatlakozni, indítsd így a kapcsol�
 """
 
 import os
+import random
 import re
 import sys
 import time
@@ -259,28 +260,89 @@ def _time_to_seconds(text: str) -> int | None:
     return None
 
 
-def ask_join_target() -> int:
+def ask_join_target():
     """
     Egyszer kérdezi meg indításkor: hány mp hátralévő időnél lépjen be.
-    A script figyeli az élő visszaszámlálót, és akkor kattint, amikor a
-    hátralévő idő eléri ezt az értéket (pl. 30s -> 30 mp hátralévőkor).
+    Fix érték (pl. 30s) VAGY tartomány (pl. 1s-1m, 1m30s-2m): utóbbi esetén
+    minden körben véletlenszerűen választ a két érték között.
     Üres válasz = azonnali belépés (0s).
+    Visszatérés: int (fix) vagy tuple[int, int] (tartomány).
     """
     typewriter("=" * 60)
     typewriter(" BEÁLLÍTÁS: mikor lépjen be? (hátralévő idő alapján)")
-    typewriter(" Add meg, hány mp hátralévőkor lépjen be:")
-    typewriter(" Formátum: 30s, 1m, 1m30s, 90 ... (üres = azonnal)")
+    typewriter(" Fix: 30s, 1m, 1m30s, 90 ...  |  Tartomány: 1s-1m, 1m30s-2m")
+    typewriter(" Tartomány esetén minden körben random választ a kettő között. (üres = azonnal)")
     typewriter("=" * 60)
     while True:
         try:
             raw = input("> ").strip()
         except (EOFError, KeyboardInterrupt):
             return 0
+        if not raw:
+            return 0
+        if raw.count("-") == 1:
+            lo_s, hi_s = raw.split("-", 1)
+            lo, hi = parse_duration(lo_s), parse_duration(hi_s)
+            if lo is not None and hi is not None and 0 <= lo <= hi:
+                lo, hi = int(lo), int(hi)
+                typewriter(f"[OK] Belépés véletlenszerűen: {lo}–{hi} mp hátralévőkor (minden körben).")
+                return (lo, hi)
+            typewriter(" Rossz tartomány. Pl. 1s-1m vagy 30s-2m.")
+            continue
         secs = parse_duration(raw)
         if secs is not None:
             typewriter(f"[OK] Belépés, amikor ennyi mp van hátra: {secs} s")
             return secs
-        typewriter(" Nem értem a formátumot, próbáld újra (pl. 30s).")
+        typewriter(" Nem értem a formátumot, próbáld újra (pl. 30s vagy 1s-1m).")
+
+
+def parse_skip_config(text):
+    """'3-4-1-2' -> (3,4,1,2); '4-1' -> (4,4,1,1); '' -> None."""
+    text = text.strip()
+    if not text:
+        return None
+    parts = [p for p in text.split("-") if p != ""]
+    try:
+        nums = [int(p) for p in parts]
+    except ValueError:
+        return None
+    if len(nums) == 2:
+        play_lo, play_hi = nums[0], nums[0]
+        skip_lo, skip_hi = nums[1], nums[1]
+    elif len(nums) == 4:
+        play_lo, play_hi, skip_lo, skip_hi = nums
+    else:
+        return None
+    if play_lo < 1:
+        return None
+    return (play_lo, play_hi, skip_lo, skip_hi)
+
+
+def ask_skip_config():
+    """
+    Egyszer kérdezi meg: hány körönként hány játékot hagyjon ki.
+    Formátum: JÁTÉKOK-KIHAGYANDÓ, pl. 3-4-1-2 (3-4 játék után 1-2 kihagyás).
+    Egyszerűbb: 4-1 = 4 játék után 1 kihagyás. Üres = sosem hagy ki.
+    """
+    typewriter("=" * 60)
+    typewriter(" BEÁLLÍTÁS: körök kihagyása (opcionális)")
+    typewriter(" Formátum: játékok-kihagyandó, pl. 3-4-1-2 (3-4 kör után 1-2 kihagyás)")
+    typewriter(" Egyszerűbb: 4-1 = 4 kör után 1 kihagyás. Üres = nincs kihagyás")
+    typewriter("=" * 60)
+    while True:
+        try:
+            raw = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        cfg = parse_skip_config(raw)
+        if cfg is not None:
+            pl, ph, sl, sh = cfg
+            typewriter(f"[OK] Kihagyás: {pl}-{ph} kör után {sl}-{sh} kör kihagyása.")
+            return cfg
+        if raw == "":
+            typewriter("[OK] Nincs kihagyás.")
+            return None
+        typewriter(" Nem értem a formátumot, próbáld újra (pl. 3-4-1-2 vagy üres).")
 
 
 def clear_console():
@@ -542,20 +604,36 @@ def report_winner(page: Page):
             typewriter(f"[WIN] {winner} nyert! Elmentve ide: {fname}")
 
 
-def run_scraper_logic(page: Page, join_target: int = 0, start_time: datetime | None = None):
+def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, skip_cfg=None):
     """
     FOLYAMATOS AUTOMATA (nem áll le):
       - figyeli a visszaszámlálót, és akkor lép be a giveawaybe, amikor a
-        hátralévő idő eléri a join_target értéket (pl. 30s -> 30 mp hátralévőkor),
+        hátralévő idő eléri a célidőt (fix, vagy tartomány => minden körben
+        véletlenszerűen a két érték közül),
       - kiírja a hátralévő időt (mozgó időzítővel),
       - amikor kipörgetik a nyertest, kiírja a nyertest + a nyert skin
         kategóriáját/nevét/árát (és elmenti a figyelt nyerteseket),
+      - ha be van állítva: x körönként y kört kihagy (nem lép be),
       - frissíti az oldalt és újra belép (új kör).
     ESC-re leáll (ha ABORT_ON_ESC = True).
     """
+    if isinstance(join_target, tuple):
+        tdisp = f"{join_target[0]}–{join_target[1]}s (random/kör)"
+    else:
+        tdisp = f"{join_target}s"
+
     typewriter("=" * 60)
-    typewriter(f" KEYDROP AMATEUR – AUTOMATA (belépés, amikor <= {join_target}s van hátra | ESC = kilépés)")
+    typewriter(f" KEYDROP AMATEUR – AUTOMATA (belépés, amikor <= {tdisp} van hátra | ESC = kilépés)")
     typewriter("=" * 60)
+
+    # kihagyási ciklus állapota
+    if skip_cfg:
+        play_lo, play_hi, skip_lo, skip_hi = skip_cfg
+        phase = "play"
+        phase_remaining = random.randint(play_lo, play_hi)
+    else:
+        phase = None
+        phase_remaining = 0
 
     round_no = 0
     while True:
@@ -569,6 +647,23 @@ def run_scraper_logic(page: Page, join_target: int = 0, start_time: datetime | N
         typewriter(f" KÖR #{round_no} – belépés a giveawaybe")
         typewriter("-" * 60)
 
+        # --- kihagyási ciklus ---
+        if skip_cfg:
+            if phase == "play" and phase_remaining <= 0:
+                phase = "skip"
+                phase_remaining = random.randint(skip_lo, skip_hi)
+            elif phase == "skip" and phase_remaining <= 0:
+                phase = "play"
+                phase_remaining = random.randint(play_lo, play_hi)
+            if phase == "skip":
+                typewriter(f"[SKIP] Kör kihagyva (kihagyások hátra: {phase_remaining}).")
+                phase_remaining -= 1
+                page.reload(wait_until="domcontentloaded")
+                time.sleep(2)
+                continue
+            else:
+                phase_remaining -= 1
+
         # futásidő + indítás ideje (HH:MM, nullákkal padded: 09:05, ne 9:5)
         if start_time is None:
             start_time = datetime.now()
@@ -578,8 +673,15 @@ def run_scraper_logic(page: Page, join_target: int = 0, start_time: datetime | N
         start_str = start_time.strftime("%H:%M")
         typewriter(f"[INFO] A script {run_h} óra {run_m} perce fut  [indítva: {start_str}]")
 
+        # célidő feloldása (tartomány => minden körben random)
+        if isinstance(join_target, tuple):
+            lo, hi = join_target
+            target = random.randint(min(lo, hi), max(lo, hi))
+        else:
+            target = join_target
+
         # 0) Várakozás a belépési időpontra: figyeljük a visszaszámlálót
-        status = wait_until_join(page, join_target)
+        status = wait_until_join(page, target)
         if status == "esc":
             typewriter("[ESC] Kilépés a várakozásból.")
             break
@@ -644,6 +746,7 @@ def main():
     time.sleep(STARTUP_WAIT)
 
     join_target = ask_join_target()
+    skip_cfg = ask_skip_config()
     start_time = datetime.now()
 
     with sync_playwright() as p:
@@ -670,7 +773,7 @@ def main():
 
         try:
             open_target_page(page)
-            run_scraper_logic(page, join_target, start_time)
+            run_scraper_logic(page, join_target, start_time, skip_cfg)
         except PWTimeoutError as e:
             typewriter(f"[ERROR] Időtúllépés az oldal/elem várásakor: {e}")
         except Exception as e:

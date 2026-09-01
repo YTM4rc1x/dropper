@@ -63,12 +63,6 @@ ABORT_ON_ESC = True
 # Ha csak csatlakoztunk a futó böngészőhöz, azt SOHA nem zárjuk be.
 KEEP_BROWSER_OPEN = True
 
-# Körök kihagyása: (játsz_lo, játsz_hi, kihagy_lo, kihagy_hi).
-# (1,1,1,1) = 1/1: 1 játszott kör után 1 kihagyott (minden 2. kör kihagyva,
-# ott a belépési cél -1s, tehát nem lép be, csak a kör végéig vár).
-# None = sosem hagy ki.
-SKIP_CFG = (1, 1, 1, 1)
-
 # Ha meg van adva, ezt az Opera GX futtathatót használja (teljes útvonal).
 # Üresen hagyva automatikusan keresi az alapértelmezett helyeken.
 OPERA_GX_PATH = os.environ.get("OPERA_GX_PATH", "")
@@ -590,6 +584,20 @@ def read_current_prize(page: Page):
     return full.strip(), _clean(price_txt), price_val
 
 
+def giveaway_not_started(page: Page) -> bool:
+    """
+    True, ha a giveaway még nem indult el (a csatlakozás gomb egy 'múlva'
+    visszaszámlálót mutat). ilyenkor a kártya még nem a Jelenlegi kör
+    nyereményét mutatja, így a min-ár döntést nem most, hanem a belépési
+    pillanatban tesszük meg.
+    """
+    try:
+        jraw = page.locator(JOIN_BTN).first.inner_text().strip()
+    except Exception:
+        return False
+    return "múlva" in re.sub(r"\s+", " ", jraw).lower()
+
+
 def read_winner(page: Page) -> str:
     """
     Beolvassa a nyertes játékos nevét a winner blokkból.
@@ -650,13 +658,13 @@ def wait_until_join(page: Page, target: int, poll: int = 1, label: str = "[ENTRY
     Ha közben kipörgetik a nyertest, 'winner'-t ad vissza; ESC esetén 'esc'-t.
     Mozgó időzítőt ír ki (ugyanazon a soron).
 
-    target < 0 esetén (pl. -1s, KIHAGYOTT KÖR) a 'join' SOHA nem érhető el:
+    target < 0 esetén (pl. -1s, "NEM LÉP BE" KÖR) a 'join' SOHA nem érhető el:
     a visszaszámláló nem lesz soha <= -1, tehát a függvény addig figyel,
-    amíg a kör véget nem ér (a nyertest kipörgetik) – így egy kihagyott
-    körben a script biztosan NEM lép be a giveawaybe.
+    amíg a kör véget nem ér (a nyertest kipörgetik) – így a script abban a
+    körben biztosan NEM lép be a giveawaybe.
     """
     if target < 0:
-        typewriter("[WAIT] KIHAGYOTT KÖR – belépési cél: -1s, ez a körben NEM lépünk be! (várakozás a kör végéig, a nyertes kipörgéséig)...")
+        typewriter("[WAIT] Ez a körben nem lépünk be – várakozás a kör végéig (a nyertes kipörgéséig)...")
     else:
         typewriter(f"[WAIT] Várakozás a belépési időpontra (cél: <= {target}s hátralévő)...")
     last = None
@@ -755,21 +763,23 @@ def report_winner(page: Page):
                 typewriter(f"[WARN] Az ár nem olvasható ki ('{price}') – nem lett hozzáadva az összeghez.")
 
 
-def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, skip_cfg=None, min_price=None):
+def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, min_price=None):
     """
     FOLYAMATOS AUTOMATA (nem áll le):
+      - minden kör elején kiolvassa és kiírja a JELENTI (még nyerhető) skin
+        nevét + árát,
+      - ha meg van adva a min_price: a DÖNTÉS AZONNAL A KÖR ELEJÉN történik:
+        * skin ára < minimum  -> a körben NEM lép be (a kör végéig, a nyertes
+          kipörgéséig vár, nem kattint),
+        * skin ára >= minimum -> a célidő elérésénél belép,
+        (ha a kör elején nem olvasható az ár – pl. a giveaway még nem indult –
+         a döntés a belépési pillanatban történik),
       - figyeli a visszaszámlálót, és akkor lép be a giveawaybe, amikor a
         hátralévő idő eléri a célidőt (fix, vagy tartomány => minden körben
         véletlenszerűen a két érték közül),
-      - ha meg van adva a min_price: a belépés ELŐTT kikeresi a skin árát
-        (case-roll-won-item-price), és ha az < minimum, nem lép be – a kör
-        végéig (a nyertes kipörgéséig) vár,
       - kiírja a hátralévő időt (mozgó időzítővel),
       - amikor kipörgetik a nyertest, kiírja a nyertest + a nyert skin
         kategóriáját/nevét/árát (és elmenti a figyelt nyerteseket),
-      - ha be van állítva: x körönként y kört kihagy – a kihagyott körben a
-        belépési cél -1s, tehát SOHA nem kattint a csatlakozás gombra, csak
-        a kör végéig (a nyertes kipörgéséig) vár,
       - frissíti az oldalt és újra belép (új kör).
     ESC-re leáll (ha ABORT_ON_ESC = True).
     """
@@ -779,24 +789,12 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, s
         tdisp = f"{join_target}s"
 
     extra = ""
-    if skip_cfg:
-        pl, ph, sl, sh = skip_cfg
-        extra += f" | kihagyás: {pl}-{ph} játék / {sl}-{sh} kihagyás"
     if min_price is not None:
         extra += f" | min skin-ár: {fmt_eur(min_price)}"
     slug = TARGET_URL.rstrip("/").split("/")[-1].upper()
     typewriter("=" * 60)
     typewriter(f" KEYDROP {slug} – AUTOMATA (belépés, amikor <= {tdisp} van hátra{extra} | ESC = kilépés)")
     typewriter("=" * 60)
-
-    # kihagyási ciklus állapota
-    if skip_cfg:
-        play_lo, play_hi, skip_lo, skip_hi = skip_cfg
-        phase = "play"
-        phase_remaining = random.randint(play_lo, play_hi)
-    else:
-        phase = None
-        phase_remaining = 0
 
     round_no = 0
     while True:
@@ -806,41 +804,6 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, s
 
         round_no += 1
 
-        # --- kihagyási ciklus: eldöntjük, EZ a kör kihagyandó-e ---
-        do_skip = False
-        if skip_cfg:
-            if phase == "play" and phase_remaining <= 0:
-                phase = "skip"
-                phase_remaining = random.randint(skip_lo, skip_hi)
-            elif phase == "skip" and phase_remaining <= 0:
-                phase = "play"
-                phase_remaining = random.randint(play_lo, play_hi)
-            do_skip = (phase == "skip")
-
-        # célidő feloldása:
-        #  - játszott kör: fix érték, vagy tartományból minden körben random
-        #  - kihagyott kör: -1s -> a visszaszámláló soha nem lesz <= -1,
-        #    tehát a 'join' soha nem éri el: ez a körben NEM lépünk be!
-        if do_skip:
-            target = -1
-        elif isinstance(join_target, tuple):
-            lo, hi = join_target
-            target = random.randint(min(lo, hi), max(lo, hi))
-        else:
-            target = join_target
-
-        typewriter("")
-        typewriter("-" * 60)
-        if do_skip:
-            typewriter(f" KÖR #{round_no} – KIHAGYVA (ez a körben nem lép be)")
-            typewriter("-" * 60)
-            typewriter(f"[SKIP] Kör kihagyva (kihagyások hátra: {phase_remaining}).")
-        else:
-            typewriter(f" KÖR #{round_no} – belépés a giveawaybe")
-            typewriter("-" * 60)
-        if skip_cfg:
-            phase_remaining -= 1  # minden körben pontosan egyszer csökken
-
         # futásidő + indítás ideje (HH:MM, nullákkal padded: 09:05, ne 9:5)
         if start_time is None:
             start_time = datetime.now()
@@ -848,6 +811,26 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, s
         total_min = int(elapsed.total_seconds() // 60)
         run_h, run_m = divmod(total_min, 60)
         start_str = start_time.strftime("%H:%M")
+
+        # a JELENTI (még nyerhető) skin + ára, és a min-ár DÖNTÉS AZONNAL a
+        # kör elején (ha a giveaway már fut – a megkezdett körskinje állandó)
+        skin_now, price_txt_now, price_val_now = read_current_prize(page)
+        not_started = giveaway_not_started(page)
+        no_entry = (
+            min_price is not None
+            and price_val_now is not None
+            and not not_started
+            and price_val_now < min_price
+        )
+
+        typewriter("")
+        typewriter("-" * 60)
+        if no_entry:
+            typewriter(f" KÖR #{round_no} – NEM LÉP BE (a skin ára < minimum {fmt_eur(min_price)})")
+        else:
+            typewriter(f" KÖR #{round_no} – belépés a giveawaybe")
+        typewriter("-" * 60)
+
         typewriter(f"[INFO] A script {run_h} óra {run_m} perce fut  [indítva: {start_str}]")
         # eddigi nyeremény (figyelt nyertesek), játékonkénti bontással
         tot = sum(WIN_TOTALS.values())
@@ -855,22 +838,47 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, s
         suffix = f"  ({' | '.join(parts)})" if parts else ""
         typewriter(f"[INFO] Eddig nyert pénz : {fmt_eur(tot)}{suffix}")
         # a JELENTI (még nyerhető) skin + ára – így látszik, mit olvas a bot
-        skin_now, price_txt_now, price_val_now = read_current_prize(page)
-        if price_val_now is not None:
+        if not_started:
+            typewriter("[SKIN] A giveaway még nem indult el – a min-ár ellenőrzést a belépési pillanatban teszem meg.")
+        elif price_val_now is not None:
             typewriter(f"[SKIN] Jelenlegi nyeremény: {skin_now or '?'} – {fmt_eur(price_val_now)}")
         elif price_txt_now or skin_now:
             typewriter(f"[SKIN] Jelenlegi nyeremény: {skin_now or '?'} – {price_txt_now or '?'}")
         else:
             typewriter("[SKIN] A jelenlegi nyeremény (név/ár) most nem olvasható ki.")
 
-        # 0) Várakozás: játszott körnél a belépési időpontra, kihagyott körnél
+        # a min-ár DÖNTÉS azonnali kiírása (ha most eldönthető)
+        if no_entry:
+            typewriter(
+                f"[PRICE] {skin_now or 'A skin'} – {fmt_eur(price_val_now)} < minimum {fmt_eur(min_price)}"
+                f" – ez a körben NEM lépek be, a kör végéig (a nyertesig) várok."
+            )
+        elif min_price is not None and price_val_now is not None:
+            typewriter(
+                f"[PRICE] {skin_now or 'A skin'} – {fmt_eur(price_val_now)} >= minimum {fmt_eur(min_price)}"
+                f" – belemegyek."
+            )
+
+        # célidő:
+        #  - "nem lép be" kör: -1s -> a 'join' soha nem jön, a kör végéig vár
+        #  - egyébként: fix érték, vagy tartományból random
+        if no_entry:
+            target = -1
+            wlabel = "[PRICE]"
+        elif isinstance(join_target, tuple):
+            lo, hi = join_target
+            target = random.randint(min(lo, hi), max(lo, hi))
+            wlabel = "[ENTRY]"
+        else:
+            target = join_target
+            wlabel = "[ENTRY]"
+
+        # 0) Várakozás: belépő körnél a belépési időpontra, "nem lép be" körnél
         #    a kör végéig (target=-1 -> 'join' soha nem jön, csak 'winner'/'esc')
-        wlabel = "[SKIP]" if do_skip else "[ENTRY]"
         status = wait_until_join(page, target, label=wlabel)
         while status == "not_started":
             # a giveaway még nem indult el (hiba már jelezve a wait_until_join-ben)
-            # -> UGYANENNEK a körnek a keretében várunk és újrapróbálkozunk,
-            #    a kihagyási fázist NEM futtatjuk újra (ne fogyjon ki belőle kör!)
+            # -> UGYANENNEK a körnek a keretében várunk és újrapróbálkozunk
             if ABORT_ON_ESC and _esc_pressed():
                 status = "esc"
                 break
@@ -884,16 +892,16 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, s
             typewriter("[ESC] Kilépés a várakozásból.")
             break
 
-        if do_skip:
-            # KIHAGYOTT KÖR: itt 'join' nem jöhet (target=-1), a kör a nyertes
-            # kipörgésével ért véget. A csatlakozás gombra NEM kattintunk.
-            # A nyertest kiírjuk/mentjük (figyelt nyertesek miatt is), aztán
-            # frissítünk és tovább a következő körre.
+        if no_entry:
+            # "NEM LÉP BE" KÖR: a kör a nyertes kipörgésével ért véget (a
+            # 'join' target=-1 mellett nem jöhet). A csatlakozás gombra
+            # NEM kattintunk. A nyertest kiírjuk/mentjük (figyelt nyertesek
+            # miatt is), aztán frissítünk és tovább a következő körre.
             if status == "winner":
-                typewriter("[SKIP] Kihagyott kör véget ért – nyertes kipörgetve, nem léptünk be.")
+                typewriter("[PRICE] Kör véget ért – nyertes kipörgetve, nem léptünk be.")
                 report_winner(page)
             else:
-                typewriter("[SKIP] Kihagyott kör véget ért, nem léptünk be.")
+                typewriter("[PRICE] Kör véget ért, nem léptünk be.")
             typewriter("[REFRESH] Oldal frissítése, következő kör...")
             page.reload(wait_until="domcontentloaded")
             time.sleep(2)
@@ -904,9 +912,11 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, s
             typewriter("[INFO] A nyertes már látható a betöltéskor.")
             report_winner(page)
         else:
-            # 0.5) Minimum-ár ellenőrzés a belépés ELŐTT:
-            #     ha a skin ára < minimum, nem lépünk be, a kör végéig várunk
-            if min_price is not None:
+            # 0.5) Minimum-ár ellenőrzés a belépés ELŐTT – CSAK akkor, ha a kör
+            #     elején nem lehetett eldönteni (pl. a giveaway akkor még nem
+            #     indult, az ár nem volt olvasható). Ha most is < minimum,
+            #     nem lépünk be, a kör végéig várunk.
+            if min_price is not None and price_val_now is None:
                 skin_name, price_txt, price_val = read_current_prize(page)
                 if price_val is not None and price_val < min_price:
                     typewriter(
@@ -987,7 +997,6 @@ def main():
 
     join_target = ask_join_target()
     min_price = ask_min_price()
-    skip_cfg = SKIP_CFG
     start_time = datetime.now()
 
     with sync_playwright() as p:
@@ -1015,7 +1024,7 @@ def main():
         try:
             open_target_page(page)
             load_win_totals()
-            run_scraper_logic(page, join_target, start_time, skip_cfg, min_price)
+            run_scraper_logic(page, join_target, start_time, min_price)
         except PWTimeoutError as e:
             typewriter(f"[ERROR] Időtúllépés az oldal/elem várásakor: {e}")
         except Exception as e:

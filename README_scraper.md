@@ -32,32 +32,25 @@ amit aztán közvetlenül vezérel/olvas.
    ESC-re leáll (ha `ABORT_ON_ESC = True`). A konzol minden nyertes után
    törlődik, így csak a legfrissebb nyertes látszik.
 
-## Körök kihagyása (skip) – fix 1/1
-A bot fixen **1/1** ritmusban játszik: 1 kör, majd 1 kihagyott (a
-`SKIP_CFG` konstanssal a scraper.py tetején változtatható, `None` = sosem
-hagy ki).
-- A **kihagyott körben a bot NEM lép be a giveawaybe**: a belépési cél
-  `-1s`-re áll, amit a visszaszámláló soha nem éri el, így a csatlakozás
-  gombra **nem kattint**. A bot a kör végéig (a nyertes kipörgéséig) vár,
-  a nyertest kiírja/elmenti (így a figyelt nyertesek kihagyott körben is
-  rögzülnek), aztán frissít és tovább a következő körre.
-- A konzol így jelzi: `KÖR #X – KIHAGYVA (ez a körben nem lép be)` +
-  `[SKIP] Hátralévő idő: 00:02:25 (cél: -1s)`.
-
 ## Jelenlegi nyeremény kiírása + minimum skin-ár
 - Minden kör elején a script kiírja a **jelenlegi (még nyerhető) skin nevét
-  és árát**: `[SKIN] Jelenlegi nyeremény: AWP | Ice Coaled – 37,55 €`.
+  és árát**: `[SKIN] Jelenlegi nyeremény: AK-47 | Aphrodite – 37,55 €`.
   Forrás sorrend: `case-roll-won-item-*` testid-ek, ha azok üresek, akkor a
   csatlakozás gomb körüli kártya szövege (JS fallback, az első "X EUR"
   értéket veszi ki a gomb szövegét kivágva).
 - Indításkor megadhatod a minimum nyeremény-árat (EUR, pl. `5` vagy `10,5`).
-  A belépési pillanatban a script kikeresi a skin árát:
-  - ha az ár **>= minimum** → belép a giveawaybe
-    (`[PRICE] AWP | Ice Coaled – 37,55 € >= minimum 37,00 € – belemegyek.`),
-  - ha az ár **< minimum** → **nem lép be**: a kör végéig (a nyertes
-    kipörgéséig) vár, a nyertest kiírja/menti, aztán tovább a következőre
-    (`[PRICE] ... – 36,00 € < minimum 37,00 € – NEM lépek be...`),
-  - ha az ár nem olvasható → belép (biztonsági alaphelyzet, `[WARN]`-rel).
+  A **döntés azonnal a kör elején** történik, és a logban látszik:
+  - ha az ár **>= minimum** → belép a giveawaybe a célidő elérésénél
+    (`[PRICE] AK-47 | Aphrodite – 37,55 € >= minimum 37,00 € – belemegyek.`),
+  - ha az ár **< minimum** → a kör fejléce már az elején
+    `KÖR #X – NEM LÉP BE (a skin ára < minimum 38,00 €)`, és a bot a kör
+    végéig (a nyertes kipörgéséig) vár, nem kattint, a nyertest
+    kiírja/menti, aztán tovább a következőre
+    (`[PRICE] AK-47 | Aphrodite – 37,55 € < minimum 38,00 € – ez a körben
+    NEM lépek be...`),
+  - ha a kör elején nem olvasható az ár (pl. a giveaway még nem indult el)
+    → a döntés a belépési pillanatban történik; ha akkor sem olvasható,
+    belép (biztonsági alaphelyzet, `[WARN]`-rel).
 - Fontos: a minimum a **lefelső határ** – pl. minimum 37-nél a 37,55 €-os
   skin BELÉP (mert 37,55 >= 37). Ha azt a skint is ki akarod zárni, 38-ra
   (vagy 37,56-ra) állítsd a minimumot.

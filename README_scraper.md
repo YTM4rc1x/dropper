@@ -32,10 +32,10 @@ amit aztán közvetlenül vezérel/olvas.
    ESC-re leáll (ha `ABORT_ON_ESC = True`). A konzol minden nyertes után
    törlődik, így csak a legfrissebb nyertes látszik.
 
-## Körök kihagyása (skip)
-Indításkor (opcionálisan) megadhatod, hogy a bot x kör után y kört hagyjon ki:
-- Formátum: `játékok-kihagyandó`, pl. `3-4-1-2` (3-4 kör után 1-2 kihagyás)
-  vagy egyszerűbben `4-1` (4 kör után 1 kihagyás). Üres = sosem hagy ki.
+## Körök kihagyása (skip) – fix 1/1
+A bot fixen **1/1** ritmusban játszik: 1 kör, majd 1 kihagyott (a
+`SKIP_CFG` konstanssal a scraper.py tetején változtatható, `None` = sosem
+hagy ki).
 - A **kihagyott körben a bot NEM lép be a giveawaybe**: a belépési cél
   `-1s`-re áll, amit a visszaszámláló soha nem éri el, így a csatlakozás
   gombra **nem kattint**. A bot a kör végéig (a nyertes kipörgéséig) vár,
@@ -43,6 +43,16 @@ Indításkor (opcionálisan) megadhatod, hogy a bot x kör után y kört hagyjon
   rögzülnek), aztán frissít és tovább a következő körre.
 - A konzol így jelzi: `KÖR #X – KIHAGYVA (ez a körben nem lép be)` +
   `[SKIP] Hátralévő idő: 00:02:25 (cél: -1s)`.
+
+## Minimum skin-ár
+Indításkor megadhatod a minimum nyeremény-árat (EUR, pl. `5` vagy `10,5`).
+A belépési pillanatban a script kikeresi a skin árát a
+`case-roll-won-item-price` elemből:
+- ha az ár **>= minimum** → belép a giveawaybe,
+- ha az ár **< minimum** → **nem lép be**: a kör végéig (a nyertes
+  kipörgéséig) vár, a nyertest kiírja/menti, aztán tovább a következőre
+  (`[PRICE] A skin ára: 2,50 € < minimum 5,00 € – NEM lépek be...`),
+- ha az ár nem olvasható → belép (biztonsági alaphelyzet, `[WARN]`-rel).
 
 ## Telepítés (saját gépen)
 ```bash

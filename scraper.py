@@ -63,6 +63,12 @@ ABORT_ON_ESC = True
 # Ha csak csatlakoztunk a futó böngészőhöz, azt SOHA nem zárjuk be.
 KEEP_BROWSER_OPEN = True
 
+# Körök kihagyása: (játsz_lo, játsz_hi, kihagy_lo, kihagy_hi).
+# (1,1,1,1) = 1/1: 1 játszott kör után 1 kihagyott (minden 2. kör kihagyva,
+# ott a belépési cél -1s, tehát nem lép be, csak a kör végéig vár).
+# None = sosem hagy ki.
+SKIP_CFG = (1, 1, 1, 1)
+
 # Ha meg van adva, ezt az Opera GX futtathatót használja (teljes útvonal).
 # Üresen hagyva automatikusan keresi az alapértelmezett helyeken.
 OPERA_GX_PATH = os.environ.get("OPERA_GX_PATH", "")
@@ -301,56 +307,30 @@ def ask_join_target():
         typewriter(" Nem értem a formátumot, próbáld újra (pl. 30s vagy 1s-1m).")
 
 
-def parse_skip_config(text):
-    """'3-4-1-2' -> (3,4,1,2); '4-1' -> (4,4,1,1); '' -> None."""
-    text = text.strip()
-    if not text:
-        return None
-    parts = [p for p in text.split("-") if p != ""]
-    try:
-        nums = [int(p) for p in parts]
-    except ValueError:
-        return None
-    if len(nums) == 2:
-        play_lo, play_hi = nums[0], nums[0]
-        skip_lo, skip_hi = nums[1], nums[1]
-    elif len(nums) == 4:
-        play_lo, play_hi, skip_lo, skip_hi = nums
-    else:
-        return None
-    if play_lo < 1:
-        return None
-    return (play_lo, play_hi, skip_lo, skip_hi)
-
-
-def ask_skip_config():
+def ask_min_price():
     """
-    Egyszer kérdezi meg: hány körönként hány játékot hagyjon ki.
-    Formátum: JÁTÉKOK-KIHAGYANDÓ, pl. 3-4-1-2 (3-4 játék után 1-2 kihagyás).
-    Egyszerűbb: 4-1 = 4 játék után 1 kihagyás. Üres = sosem hagy ki.
-    A kihagyott körben a bot NEM lép be (belépési cél: -1s), csak a kör
-    végéig (a nyertes kipörgéséig) vár, aztán tovább a következő körre.
+    Egyszer kérdezi meg indításkor: milyen minimális skin-ár felett lépjen be.
+    Pl. '5', '10,5', '10 EUR'. Üres = nincs minimum (mindig lép be).
+    Visszatérés: float (EUR) vagy None.
     """
     typewriter("=" * 60)
-    typewriter(" BEÁLLÍTÁS: körök kihagyása (opcionális)")
-    typewriter(" Formátum: játékok-kihagyandó, pl. 3-4-1-2 (3-4 kör után 1-2 kihagyás)")
-    typewriter(" Egyszerűbb: 4-1 = 4 kör után 1 kihagyás. Üres = nincs kihagyás")
-    typewriter(" Kihagyott körben nem lép be (cél: -1s), csak a kör végéig vár.")
+    typewriter(" BEÁLLÍTÁS: minimum skin-ár (opcionális)")
+    typewriter(" Csak akkor lép be, ha a nyeremény ára >= ez az érték (EUR).")
+    typewriter(" Pl.: 5 vagy 10,5.  Üres = nincs minimum (mindig lép be).")
     typewriter("=" * 60)
     while True:
         try:
             raw = input("> ").strip()
         except (EOFError, KeyboardInterrupt):
             return None
-        cfg = parse_skip_config(raw)
-        if cfg is not None:
-            pl, ph, sl, sh = cfg
-            typewriter(f"[OK] Kihagyás: {pl}-{ph} kör után {sl}-{sh} kör kihagyása.")
-            return cfg
-        if raw == "":
-            typewriter("[OK] Nincs kihagyás.")
+        if not raw:
+            typewriter("[OK] Nincs minimum ár – mindig lép be.")
             return None
-        typewriter(" Nem értem a formátumot, próbáld újra (pl. 3-4-1-2 vagy üres).")
+        val = parse_price(raw)
+        if val is not None:
+            typewriter(f"[OK] Minimum ár: {fmt_eur(val)} – ennél olcsóbb skinnél nem lép be.")
+            return val
+        typewriter(" Nem értem az árat, próbáld újra (pl. 5 vagy 10,5).")
 
 
 def clear_console():
@@ -376,10 +356,18 @@ def save_win(player: str, category: str, name: str, price: str) -> str | None:
     fname = WATCHED_WINNERS.get(player.lower())
     if not fname:
         return None
+
+    def _clean(s: str) -> str:
+        # a keydrop beleszór láthatatlan karaktereket: soft-hyphen (U+00AD,
+        # pl. "AWP­") és no-break space (U+00A0, pl. "6,84&nbsp;EUR")
+        return s.replace("\u00ad", "").replace("\xa0", " ").strip()
+
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
     # a keydrop kategóriája gyakran tartalmaz záró '|'-t (pl. "Desert Eagle |"),
     # ezért levágjuk, hogy ne legyen dupla elválasztó.
-    cat = category.rstrip().rstrip("|").rstrip()
+    cat = _clean(category).rstrip("|").rstrip()
+    name = _clean(name)
+    price = _clean(price)
     item = f"{cat} | {name}".strip()
     line = f"{ts} | {item} | ár {price}\n"
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), fname)
@@ -693,12 +681,15 @@ def report_winner(page: Page):
                 typewriter(f"[WARN] Az ár nem olvasható ki ('{price}') – nem lett hozzáadva az összeghez.")
 
 
-def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, skip_cfg=None):
+def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, skip_cfg=None, min_price=None):
     """
     FOLYAMATOS AUTOMATA (nem áll le):
       - figyeli a visszaszámlálót, és akkor lép be a giveawaybe, amikor a
         hátralévő idő eléri a célidőt (fix, vagy tartomány => minden körben
         véletlenszerűen a két érték közül),
+      - ha meg van adva a min_price: a belépés ELŐTT kikeresi a skin árát
+        (case-roll-won-item-price), és ha az < minimum, nem lép be – a kör
+        végéig (a nyertes kipörgéséig) vár,
       - kiírja a hátralévő időt (mozgó időzítővel),
       - amikor kipörgetik a nyertest, kiírja a nyertest + a nyert skin
         kategóriáját/nevét/árát (és elmenti a figyelt nyerteseket),
@@ -713,8 +704,14 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, s
     else:
         tdisp = f"{join_target}s"
 
+    extra = ""
+    if skip_cfg:
+        pl, ph, sl, sh = skip_cfg
+        extra += f" | kihagyás: {pl}-{ph} játék / {sl}-{sh} kihagyás"
+    if min_price is not None:
+        extra += f" | min skin-ár: {fmt_eur(min_price)}"
     typewriter("=" * 60)
-    typewriter(f" KEYDROP AMATEUR – AUTOMATA (belépés, amikor <= {tdisp} van hátra | ESC = kilépés)")
+    typewriter(f" KEYDROP AMATEUR – AUTOMATA (belépés, amikor <= {tdisp} van hátra{extra} | ESC = kilépés)")
     typewriter("=" * 60)
 
     # kihagyási ciklus állapota
@@ -824,6 +821,43 @@ def run_scraper_logic(page, join_target=0, start_time: datetime | None = None, s
             typewriter("[INFO] A nyertes már látható a betöltéskor.")
             report_winner(page)
         else:
+            # 0.5) Minimum-ár ellenőrzés a belépés ELŐTT:
+            #     ha a skin ára < minimum, nem lépünk be, a kör végéig várunk
+            if min_price is not None:
+                price_txt = safe_inner_text(page, SKIN_PRICE)
+                price_val = parse_price(price_txt)
+                if price_val is not None and price_val < min_price:
+                    typewriter(
+                        f"[PRICE] A skin ára: {fmt_eur(price_val)} < minimum {fmt_eur(min_price)}"
+                        f" – NEM lépek be, a kör végéig (a nyertesig) várok."
+                    )
+                    if page.locator(WINNER_AVATAR).count() > 0:
+                        report_winner(page)
+                    else:
+                        found = wait_for_winner(page)
+                        if not found:
+                            if ABORT_ON_ESC and _esc_pressed():
+                                break
+                            typewriter("[RETRY] Újrapróbálkozás a következő körben.")
+                            page.reload(wait_until="domcontentloaded")
+                            time.sleep(2)
+                            continue
+                        report_winner(page)
+                    typewriter("[REFRESH] Oldal frissítése, következő kör...")
+                    page.reload(wait_until="domcontentloaded")
+                    time.sleep(2)
+                    continue
+                elif price_val is None:
+                    typewriter(
+                        f"[WARN] Az ár nem olvasható ki belépéskor ('{price_txt}') – a biztonság "
+                        f"kedvéért BELEMEGY."
+                    )
+                else:
+                    typewriter(
+                        f"[PRICE] A skin ára: {fmt_eur(price_val)} >= minimum {fmt_eur(min_price)}"
+                        f" – belemegyek."
+                    )
+
             # 1) Belépés a giveawaybe (elérte a cél hátralévő időt)
             ok = click_join(page)
             if not ok:
@@ -870,7 +904,8 @@ def main():
     time.sleep(STARTUP_WAIT)
 
     join_target = ask_join_target()
-    skip_cfg = ask_skip_config()
+    min_price = ask_min_price()
+    skip_cfg = SKIP_CFG
     start_time = datetime.now()
 
     with sync_playwright() as p:
@@ -898,7 +933,7 @@ def main():
         try:
             open_target_page(page)
             load_win_totals()
-            run_scraper_logic(page, join_target, start_time, skip_cfg)
+            run_scraper_logic(page, join_target, start_time, skip_cfg, min_price)
         except PWTimeoutError as e:
             typewriter(f"[ERROR] Időtúllépés az oldal/elem várásakor: {e}")
         except Exception as e:
